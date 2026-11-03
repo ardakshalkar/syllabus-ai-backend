@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Query, status
 
 from app.deps import CurrentUser, DbSession
-from app.models import CheckSession
+from app.models import CheckSession, User
 from app.schemas.work import SessionCreate, SessionItemOut, SessionOut
 from app.services import sessions
 from app.workers import dispatch
@@ -13,9 +13,13 @@ router = APIRouter(tags=["sessions"])
 
 async def _out(session: DbSession, cs: CheckSession) -> SessionOut:
     await session.refresh(cs)
+    # The session list shows who started a check, so the name travels with the row rather than
+    # leaving the browser to resolve each id. Repeat lookups are served by the identity map.
+    creator = await session.get(User, cs.created_by)
     return SessionOut.model_validate(
         {
             **{c.key: getattr(cs, c.key) for c in CheckSession.__table__.columns},
+            "created_by_name": creator.name if creator else "",
             "progress": await sessions.progress(session, cs.id),
         }
     )

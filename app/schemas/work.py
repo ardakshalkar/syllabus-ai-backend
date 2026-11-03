@@ -41,6 +41,7 @@ class SessionOut(Schema):
     completed_at: datetime | None
     created_at: datetime
     created_by: uuid.UUID
+    created_by_name: str
     notify_provost: bool
     notify_school: bool
     progress: SessionProgress
