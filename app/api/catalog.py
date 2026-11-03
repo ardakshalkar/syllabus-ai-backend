@@ -3,23 +3,40 @@ import uuid
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, status
 
+from app.auth.rbac import forbidden
+from app.config import get_settings
 from app.deps import CurrentUser, DbSession
-from app.enums import AiStatus
+from app.enums import AiStatus, Role
 from app.models import Course, Program, RubricVersion, School, Syllabus, UploadFolder, User
 from app.models.org import course_instructors
 from app.schemas.catalog import (
+    CourseIn,
     CourseOut,
     FolderIn,
     FolderOut,
     FolderPatch,
+    IntegrationsOut,
     ProfessorOut,
+    ProgramIn,
     ProgramOut,
     RubricOut,
+    SchoolIn,
     SchoolOut,
 )
 from app.services.sessions import ensure_can_manage
 
 router = APIRouter(tags=["catalog"])
+
+
+def _program_out(program: Program) -> ProgramOut:
+    return ProgramOut(
+        id=program.id,
+        slug=program.slug,
+        name=program.name,
+        school_id=program.school_id,
+        degree_level=program.degree_level,
+        has_passport=bool(program.passport_text),
+    )
 
 
 @router.get("/schools", response_model=list[SchoolOut])
@@ -32,10 +49,8 @@ async def programs(_: CurrentUser, session: DbSession, school_id: uuid.UUID | No
     query = sa.select(Program).order_by(Program.name)
     if school_id:
         query = query.where(Program.school_id == school_id)
-    return [
-        ProgramOut.model_validate(p).model_copy(update={"has_passport": bool(p.passport_text)})
-        for p in await session.scalars(query)
-    ]
+    # has_passport is derived, not a column, so model_validate on the ORM object cannot supply it.
+    return [_program_out(p) for p in await session.scalars(query)]
 
 
 @router.get("/courses", response_model=list[CourseOut])
@@ -73,6 +88,97 @@ async def rubric(_: CurrentUser, session: DbSession, code: str | None = None):
     if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Rubric not found")
     return found
+
+
+async def _commit(session: DbSession, conflict: str) -> None:
+    """Slugs are unique in the database; turn the violation into a 409 rather than a 500."""
+    try:
+        await session.commit()
+    except sa.exc.IntegrityError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, conflict) from exc
+
+
+@router.post("/schools", response_model=SchoolOut, status_code=status.HTTP_201_CREATED)
+async def create_school(body: SchoolIn, principal: CurrentUser, session: DbSession):
+    if not principal.has(Role.provost):
+        raise forbidden("Only the Provost Office can add a School")
+    school = School(slug=body.slug, name=body.name.strip())
+    session.add(school)
+    await _commit(session, "A School with this slug already exists")
+    return school
+
+
+@router.post("/programs", response_model=ProgramOut, status_code=status.HTTP_201_CREATED)
+async def create_program(body: ProgramIn, principal: CurrentUser, session: DbSession):
+    # The Provost Office, or the administrator of the School the program belongs to.
+    ensure_can_manage(principal, body.school_id)
+    if await session.get(School, body.school_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found")
+    program = Program(
+        slug=body.slug,
+        name=body.name.strip(),
+        school_id=body.school_id,
+        degree_level=body.degree_level.strip(),
+        passport_text=body.passport_text,
+    )
+    session.add(program)
+    await _commit(session, "A program with this slug already exists")
+    return _program_out(program)
+
+
+@router.post("/courses", response_model=CourseOut, status_code=status.HTTP_201_CREATED)
+async def create_course(body: CourseIn, principal: CurrentUser, session: DbSession):
+    program = await session.get(Program, body.program_id)
+    if program is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Program not found")
+    may_add = (
+        principal.has(Role.provost)
+        or (principal.has(Role.school_admin) and program.school_id in principal.school_ids)
+        or (principal.has(Role.program_head) and program.id in principal.program_ids)
+    )
+    if not may_add:
+        raise forbidden(
+            "Only the Provost Office, the School administrator or the program head can add a course"
+        )
+    # The lead teaches the course, so they join the instructors whether or not they were listed.
+    wanted = list(dict.fromkeys([body.lead_id, *body.instructor_ids]))
+    people = {u.id: u for u in await session.scalars(sa.select(User).where(User.id.in_(wanted)))}
+    if missing := [str(i) for i in wanted if i not in people]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown user: {', '.join(missing)}")
+    course = Course(
+        slug=body.slug,
+        name=body.name.strip(),
+        program_id=body.program_id,
+        credits=body.credits,
+        lead_id=body.lead_id,
+    )
+    course.instructors = [people[i] for i in wanted]
+    session.add(course)
+    await _commit(session, "A course with this slug already exists")
+    return CourseOut(
+        id=course.id,
+        slug=course.slug,
+        name=course.name,
+        program_id=course.program_id,
+        credits=course.credits,
+        lead_id=course.lead_id,
+        instructor_ids=wanted,
+    )
+
+
+@router.get("/integrations", response_model=IntegrationsOut)
+async def integrations(_: CurrentUser) -> IntegrationsOut:
+    s = get_settings()
+    return IntegrationsOut(
+        # Google OIDC is the real sign-in. Without client credentials only dev-login is left,
+        # which is why the frontend still offers its demo user switcher.
+        auth="http" if s.google_client_id and s.google_client_secret else "stub",
+        # Drive is not connected: files are uploaded through the API to FILES_ROOT and a School's
+        # folder is a logical path (models.org.UploadFolder), not a Drive folder.
+        drive="stub",
+        email=s.email_backend,
+        llm=s.llm_provider,
+    )
 
 
 async def _folder_out(session: DbSession, folder: UploadFolder) -> FolderOut:
