@@ -8,8 +8,11 @@ import logging
 import re
 from pathlib import Path
 
+import sqlalchemy as sa
+
 from app.db import pg
 from app.db.mongo import close_mongo, init_mongo
+from app.enums import Role
 
 RUBRIC = Path(__file__).resolve().parents[1] / "rubric" / "2026.1.yaml"
 
@@ -66,7 +69,6 @@ async def _drive_check(folder_ids: list[str], write: bool) -> bool:
 
 
 async def _setup_schools() -> None:
-    import sqlalchemy as sa
 
     from app.models import RubricVersion
     from app.services.demo_users import setup_schools
@@ -96,7 +98,6 @@ async def _add_test_users(instructor: bool) -> None:
 async def _requeue_runs(include_sessions: bool) -> None:
     """Send Queued runs to the broker again, e.g. after Redis lost its queue (it keeps no data on restart).
     A run that is already queued or done ignores the extra message (checks.execute_run is idempotent)."""
-    import sqlalchemy as sa
 
     from app.enums import RunStatus
     from app.models import AssessmentRun
@@ -147,14 +148,19 @@ async def _drive_setup(args: argparse.Namespace) -> None:
 
 
 async def _users(args: argparse.Namespace) -> None:
-    from app.enums import Role
     from app.services import users
 
     async with pg.session_scope() as session:
         try:
             if args.command == "add-user":
                 user, created = await users.add_user(
-                    session, args.email, Role(args.role), name=args.name, school=args.school
+                    session,
+                    args.email,
+                    Role(args.role),
+                    name=args.name or args.name_arg,
+                    title=args.title,
+                    school=args.school,
+                    program=args.program,
                 )
                 print(f"{'created' if created else 'updated'} {user.email}")
             elif args.command == "disable-user":
@@ -251,6 +257,8 @@ def main() -> None:
         "add-user", help="give a person a role (creates the user); they sign in with their Google account"
     )
     add_user.add_argument("email")
+    # Also accepted positionally (`add-user EMAIL "Full Name" --role …`), the form PR #1 introduced.
+    add_user.add_argument("name_arg", nargs="?", metavar="name", help="display name (same as --name)")
     add_user.add_argument(
         "--role", required=True, choices=["provost", "kok", "school_admin", "program_head", "professor"]
     )
@@ -258,6 +266,10 @@ def main() -> None:
         "--school", help="school_admin / program_head: economics, humanities, law, digital (or slug / name)"
     )
     add_user.add_argument("--name", help="display name (default: the email, replaced by the Google name)")
+    add_user.add_argument("--title", help="job title, e.g. Associate Professor")
+    add_user.add_argument(
+        "--program", help="program_head: the program's slug (default: the School's program)"
+    )
     sub.add_parser("list-users", help="every user with their roles")
     disable = sub.add_parser("disable-user", help="refuse this person's sign-ins from now on")
     disable.add_argument("email")

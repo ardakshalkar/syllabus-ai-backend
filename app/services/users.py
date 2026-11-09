@@ -41,14 +41,27 @@ async def find_school(session: AsyncSession, ref: str) -> School:
 
 
 async def add_user(
-    session: AsyncSession, email: str, role: Role, *, name: str | None = None, school: str | None = None
+    session: AsyncSession,
+    email: str,
+    role: Role,
+    *,
+    name: str | None = None,
+    title: str | None = None,
+    school: str | None = None,
+    program: str | None = None,
 ) -> tuple[User, bool]:
     """Create the user if needed and give them the role. Returns (user, created)."""
     email = email.strip().lower()
     if "@" not in email:
         raise UserError(f"not an email: {email!r}")
     school_id = program_id = None
-    if role in (Role.school_admin, Role.program_head):
+    if role == Role.program_head and program:
+        program_id = await session.scalar(sa.select(Program.id).where(Program.slug == program.strip()))
+        if program_id is None:
+            raise UserError(f"no program with slug {program!r}")
+    elif program:
+        raise UserError("--program is only for program_head")
+    elif role in (Role.school_admin, Role.program_head):
         if not school:
             raise UserError(f"--school is required for {role.value}")
         found = await find_school(session, school)
@@ -66,11 +79,12 @@ async def add_user(
     user = await session.scalar(sa.select(User).where(sa.func.lower(User.email) == email))
     created = user is None
     if user is None:
-        user = User(email=email, name=name or email, roles=[])
+        user = User(email=email, name=name or email, title=title, roles=[])
         session.add(user)
         await session.flush()
-    elif name:
-        user.name = name
+    else:
+        user.name = name or user.name
+        user.title = title or user.title
     user.is_active = True
     if not any(
         r.role == role and r.school_id == school_id and r.program_id == program_id for r in user.roles
