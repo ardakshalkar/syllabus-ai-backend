@@ -146,6 +146,28 @@ async def _drive_setup(args: argparse.Namespace) -> None:
         )
 
 
+async def _users(args: argparse.Namespace) -> None:
+    from app.enums import Role
+    from app.services import users
+
+    async with pg.session_scope() as session:
+        try:
+            if args.command == "add-user":
+                user, created = await users.add_user(
+                    session, args.email, Role(args.role), name=args.name, school=args.school
+                )
+                print(f"{'created' if created else 'updated'} {user.email}")
+            elif args.command == "disable-user":
+                user = await users.disable_user(session, args.email)
+                print(f"disabled {user.email}: their sign-ins are refused from now on")
+        except users.UserError as exc:
+            raise SystemExit(f"error: {exc}") from exc
+        for user, roles in await users.list_users(session):
+            if args.command == "list-users" or user.email == args.email.strip().lower():
+                state = "" if user.is_active else "  [disabled]"
+                print(f"{user.email}{state}\n  " + ("\n  ".join(roles) or "no roles"))
+
+
 async def _create_db() -> None:
     """Create the database named in DATABASE_URL if it does not exist yet (the separate one for real data)."""
     import asyncpg
@@ -181,6 +203,8 @@ async def _main(args: argparse.Namespace) -> None:
             await _drive_setup(args)
         elif args.command == "requeue-runs":
             await _requeue_runs(args.all)
+        elif args.command in ("add-user", "list-users", "disable-user"):
+            await _users(args)
         elif args.command == "setup-schools":
             await _setup_schools()
         elif args.command == "add-test-users":
@@ -223,6 +247,20 @@ def main() -> None:
         "setup-schools",
         help="create the University's four Schools, and the rubric in a new database (idempotent)",
     )
+    add_user = sub.add_parser(
+        "add-user", help="give a person a role (creates the user); they sign in with their Google account"
+    )
+    add_user.add_argument("email")
+    add_user.add_argument(
+        "--role", required=True, choices=["provost", "kok", "school_admin", "program_head", "professor"]
+    )
+    add_user.add_argument(
+        "--school", help="school_admin / program_head: economics, humanities, law, digital (or slug / name)"
+    )
+    add_user.add_argument("--name", help="display name (default: the email, replaced by the Google name)")
+    sub.add_parser("list-users", help="every user with their roles")
+    disable = sub.add_parser("disable-user", help="refuse this person's sign-ins from now on")
+    disable.add_argument("email")
     users = sub.add_parser(
         "add-test-users",
         help="add KOK, School admin, Program head and professor users to this database (not in prod)",

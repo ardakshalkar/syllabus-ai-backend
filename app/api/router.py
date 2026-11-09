@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api import (
     analytics,
     approval,
+    auth,
     catalog,
     drive,
     improve,
@@ -17,6 +18,7 @@ from app.api import (
 api_router = APIRouter()
 for module in (
     me,
+    auth,
     catalog,
     drive,
     syllabi,

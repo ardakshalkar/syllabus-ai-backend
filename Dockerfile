@@ -12,4 +12,5 @@ RUN useradd --create-home app && mkdir -p /data && chown app /data
 USER app
 
 EXPOSE 8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Behind Traefik: trust X-Forwarded-* so URLs the app builds use https and the public host.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*"]

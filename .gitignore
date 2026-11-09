@@ -9,3 +9,4 @@ var/
 celerybeat-schedule*
 drive-local/
 secrets/
+.DS_Store

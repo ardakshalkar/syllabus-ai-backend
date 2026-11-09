@@ -44,6 +44,26 @@ docker compose exec api python -m app.cli add-test-users   # пользоват�
 
 **Права:** офис проректора и КОК видят все школы и все силлабусы, запускают проверки и сессии везде, видят всю аналитику. Администратор школы делает то же самое в рамках своей школы.
 
+## Вход через Google
+
+С `AUTH_PROVIDER=google` пользователи входят корпоративным Google-аккаунтом `@narxoz.kz` (`app/auth/google.py`). Google подтверждает только личность; что человек может делать, решают роли в нашей базе. Без записи в базе вход не пройдёт («нет доступа»).
+
+1. В Google Cloud → APIs & Services → Credentials создайте OAuth client ID типа **Web application** и добавьте Authorized redirect URIs: `https://syllabus-agent.narxoz.kz/api/v1/auth/google/callback` (и для разработки `http://localhost:8080/api/v1/auth/google/callback`).
+2. В `.env`: `AUTH_PROVIDER=google`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `JWT_SECRET` (`openssl rand -hex 32`), для localhost ещё `COOKIE_SECURE=false`.
+3. Заведите людей с ролями:
+
+```bash
+python -m app.cli add-user daniar.aitanov@narxoz.kz --role provost
+python -m app.cli add-user kok.secretary@narxoz.kz --role kok
+python -m app.cli add-user admin@narxoz.kz --role school_admin --school digital      # economics, humanities, law, digital
+python -m app.cli add-user head@narxoz.kz --role program_head --school law
+python -m app.cli add-user teacher@narxoz.kz --role professor
+python -m app.cli list-users
+python -m app.cli disable-user leaver@narxoz.kz      # вход и запросы отклоняются, история остаётся
+```
+
+Повторный `add-user` добавляет ещё одну роль. Имя подтягивается из Google при первом входе. Сессия — cookie `HttpOnly` на `SESSION_TTL_HOURS` часов.
+
 ## Разработка без Docker для приложения
 
 ```bash

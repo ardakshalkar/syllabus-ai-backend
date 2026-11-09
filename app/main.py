@@ -33,6 +33,8 @@ def create_app(*, use_lifespan: bool = True) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        # The Google sign-in session is a cookie; in production the frontend and the API share one host.
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )

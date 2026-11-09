@@ -1,7 +1,8 @@
-"""Who is calling. Identity belongs to an external auth microservice; roles stay here (see rbac.py).
+"""Who is calling. Identity comes from outside; roles stay here (see rbac.py).
 
-The microservice is not connected yet, so AUTH_PROVIDER=stub is the default. To connect it, set
-AUTH_PROVIDER=http and AUTH_SERVICE_URL, and adapt HttpAuthClient if its contract differs from the one below.
+AUTH_PROVIDER=google: Google Workspace sign-in (app/auth/google.py), the session is a cookie this app signs.
+AUTH_PROVIDER=http: an external auth microservice (HttpAuthClient below).
+AUTH_PROVIDER=stub: dev and tests only, the bearer token is `stub:<email>`.
 """
 
 from dataclasses import dataclass
@@ -88,7 +89,32 @@ class HttpAuthClient:
         raise NotImplementedError("connect the auth service's account check in HttpAuthClient.verify_account")
 
 
+class GoogleSessionAuthClient:
+    """The session cookie issued after a Google sign-in (app/auth/google.py)."""
+
+    async def verify_token(self, token: str) -> Identity:
+        import jwt
+
+        from app.auth.google import read_session
+
+        try:
+            claims = read_session(token)
+        except jwt.PyJWTError as exc:
+            raise InvalidToken(str(exc)) from exc
+        return Identity(
+            external_id=str(claims["sub"]), email=str(claims["email"]).lower(), name=claims.get("name")
+        )
+
+    async def verify_account(self, email: str) -> bool:
+        # Only accounts of the Workspace domain can hold a session at all.
+        domain = get_settings().google_allowed_domain.lower()
+        return not domain or email.lower().endswith(f"@{domain}")
+
+
 def get_auth_client() -> AuthClient:
-    if get_settings().auth_provider == "stub":
+    provider = get_settings().auth_provider
+    if provider == "stub":
         return StubAuthClient()
+    if provider == "google":
+        return GoogleSessionAuthClient()
     return HttpAuthClient()

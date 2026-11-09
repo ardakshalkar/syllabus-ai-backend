@@ -47,8 +47,23 @@ class Settings(BaseSettings):
     # How often celery beat re-reads the Schools' Drive folders (services/drive_catalog.py), with Google Drive.
     drive_sync_interval_s: int = 900
 
-    # stub: no auth service yet, the bearer token is `stub:<email>`. http: see app/auth/client.py.
-    auth_provider: Literal["stub", "http"] = "stub"
+    # stub: dev only, the bearer token is `stub:<email>`. google: sign in with a Google Workspace account
+    # (app/auth/google.py). http: an external auth service (app/auth/client.py).
+    auth_provider: Literal["stub", "http", "google"] = "stub"
+    # AUTH_PROVIDER=google: an OAuth client of type "Web application" in Google Cloud.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    # Only accounts of this Workspace domain may sign in (the id_token's `hd` claim).
+    google_allowed_domain: str = "narxoz.kz"
+    # Where Google sends people back; empty: derived from the request (fine behind a proxy only with
+    # forwarded headers). Must be listed in the OAuth client's "Authorized redirect URIs".
+    auth_redirect_url: str = ""
+    # Signs the session cookie the app issues after a Google sign-in. At least 32 random characters.
+    jwt_secret: str = ""
+    session_ttl_hours: int = 12
+    session_cookie_name: str = "syllabus_session"
+    # false only for http://localhost; the cookie is HttpOnly and SameSite=Lax either way.
+    cookie_secure: bool = True
     auth_service_url: str = ""
     auth_service_verify_path: str = "/verify"
     auth_service_timeout_s: float = 5
@@ -100,6 +115,20 @@ class Settings(BaseSettings):
             )
         if self.auth_provider == "http" and not self.auth_service_url:
             raise ValueError("AUTH_PROVIDER=http needs AUTH_SERVICE_URL")
+        if self.auth_provider == "google":
+            missing = [
+                name
+                for name, value in (
+                    ("GOOGLE_CLIENT_ID", self.google_client_id),
+                    ("GOOGLE_CLIENT_SECRET", self.google_client_secret),
+                    ("JWT_SECRET", self.jwt_secret),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(f"AUTH_PROVIDER=google needs {', '.join(missing)}")
+            if self.env == "prod" and len(self.jwt_secret) < 32:
+                raise ValueError("JWT_SECRET must be at least 32 characters in prod")
         return self
 
 
