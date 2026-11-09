@@ -20,7 +20,7 @@ class User(UUIDPk, CreatedAt, Base):
     email: Mapped[str] = mapped_column(sa.String(254), unique=True)
     name: Mapped[str] = mapped_column(sa.String(200))
     title: Mapped[str | None] = mapped_column(sa.String(120))
-    google_sub: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
+    external_id: Mapped[str | None] = mapped_column(sa.String(255), unique=True)
     is_active: Mapped[bool] = mapped_column(default=True)
 
     roles: Mapped[list["RoleAssignment"]] = relationship(back_populates="user", lazy="selectin")
@@ -65,13 +65,16 @@ class Course(UUIDPk, Base):
     name: Mapped[str] = mapped_column(sa.String(200))
     program_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("programs.id"), index=True)
     credits: Mapped[int]
-    lead_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"), index=True)
+    # None for a course read from Google Drive: the School's administrators act for it.
+    lead_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id"), index=True)
+    # The Drive folder the syllabus file sits in (a course read from Drive); used to group and filter.
+    discipline: Mapped[str | None] = mapped_column(sa.String(200))
 
     instructors: Mapped[list[User]] = relationship(secondary=course_instructors, lazy="selectin")
 
 
 class UploadFolder(UUIDPk, CreatedAt, Base):
-    """Logical folder a School uploads into; replaces the prototype's Google Drive folder."""
+    """Folder a School uploads into. `drive_folder_id` is where its files land in Google Drive."""
 
     __tablename__ = "upload_folders"
     __table_args__ = (sa.UniqueConstraint("school_id", "path"),)
@@ -79,3 +82,4 @@ class UploadFolder(UUIDPk, CreatedAt, Base):
     school_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("schools.id"), index=True)
     path: Mapped[str] = mapped_column(sa.String(300))
     semester: Mapped[str] = mapped_column(sa.String(40))
+    drive_folder_id: Mapped[str | None] = mapped_column(sa.String(128))

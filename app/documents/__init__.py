@@ -100,11 +100,32 @@ class LlmTrace(Document):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     duration_ms: int
+    # Time spent waiting for a free request slot (LLM_MAX_CONCURRENCY) before the request was sent.
+    queued_ms: int | None = None
     error: str | None = None
     created_at: datetime = Field(default_factory=_now)
 
     class Settings:
         name = "llm_traces"
+
+
+class DriveSettingsDoc(Document):
+    """Google Drive settings saved in the app (one document); see app/storage/drive_config.py.
+    The key itself is a file under SECRETS_ROOT, never stored here."""
+
+    credentials_saved: bool = False
+    credentials_type: str | None = None
+    client_email: str | None = None
+    client_id: str | None = None
+    project_id: str | None = None
+    impersonate_user: str = ""
+    shared_folder_id: str = ""
+    read_only: bool = True
+    updated_by: str | None = None
+    updated_at: datetime = Field(default_factory=_now)
+
+    class Settings:
+        name = "drive_settings"
 
 
 DOCUMENT_MODELS = [
@@ -114,4 +135,5 @@ DOCUMENT_MODELS = [
     WizardDraft,
     AssistantThread,
     LlmTrace,
+    DriveSettingsDoc,
 ]

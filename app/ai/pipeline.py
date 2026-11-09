@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from itertools import groupby
 
 from app.ai.checks.criteria import evaluate_principle
@@ -21,10 +22,40 @@ CONTEXT_CHECK = {
     "Narxoz library catalogue": CheckKind.library,
 }
 
-Phase = Callable[[str], Awaitable[None]]
+# What a check goes through, in order; Progress.step indexes this. The UI lists them as a checklist.
+STEPS = (
+    "Reading document",
+    "Checking technical requirements",
+    "Evaluating criteria",
+    "Generating evidence",
+    "Preparing recommendations",
+)
+READING, TECHNICAL, CRITERIA, EVIDENCE, RECOMMENDATIONS = range(len(STEPS))
 
 
-async def _noop(_: str) -> None:
+@dataclass
+class Progress:
+    step: int
+    criteria_total: int = 0
+    principles_done: int = 0
+    principles_total: int = 0
+    # Principles whose LLM request is running now, e.g. "4. Assessment".
+    running: list[str] = field(default_factory=list)
+
+    @property
+    def phase(self) -> str:
+        if self.step == CRITERIA:
+            return (
+                f"Evaluating {self.criteria_total} criteria "
+                f"({self.principles_done}/{self.principles_total} principles)"
+            )
+        return STEPS[self.step]
+
+
+Phase = Callable[[Progress], Awaitable[None]]
+
+
+async def _noop(_: Progress) -> None:
     return None
 
 
@@ -56,7 +87,7 @@ async def evaluate(
     settings = get_settings()
     context = context or {}
 
-    await on_phase("Checking technical requirements")
+    await on_phase(Progress(TECHNICAL))
     report = build_report(content)
     if CheckKind.technical not in checks:
         report.issues = []
@@ -76,26 +107,52 @@ async def evaluate(
         elif CheckKind.criteria in checks:
             to_llm.append(spec)
 
-    await on_phase(f"Evaluating {len(specs)} criteria")
     batches = [
         list(group)
         for _, group in groupby(sorted(to_llm, key=lambda s: s.principle), key=lambda s: s.principle)
     ]
-    batch_results = await asyncio.gather(
-        *(evaluate_principle(llm, b, content, report, context, run_id=run_id, trace=trace) for b in batches)
-    )
+    progress = Progress(CRITERIA, criteria_total=len(specs), principles_total=len(batches))
+    # Same limit as the LLM client's, applied here too so `running` lists only principles really in flight
+    # (and, with one slot, they go in rubric order).
+    slots = asyncio.Semaphore(settings.llm_max_concurrency)
+
+    async def evaluate_batch(batch: list[CriterionSpec]) -> list[CriterionResultData]:
+        name = f"{batch[0].principle}. {batch[0].principle_name}"
+        async with slots:
+            progress.running.append(name)
+            await on_phase(progress)
+            try:
+                result = await evaluate_principle(
+                    llm, batch, content, report, context, run_id=run_id, trace=trace
+                )
+            finally:
+                progress.running.remove(name)
+        progress.principles_done += 1
+        await on_phase(progress)
+        return result
+
+    await on_phase(progress)
+    tasks = [asyncio.ensure_future(evaluate_batch(b)) for b in batches]
+    try:
+        batch_results = await asyncio.gather(*tasks)
+    except BaseException:
+        # One principle failed or the run was cancelled: stop the LLM calls still waiting or running.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
     for batch in batch_results:
         for r in batch:
             results[r.criterion_id] = r
 
-    await on_phase("Generating evidence")
+    await on_phase(Progress(EVIDENCE, len(specs), len(batches), len(batches)))
     ordered = [results[s.code] for s in specs if s.code in results]
     if CheckKind.evidence in checks:
         ordered = [verify(r, content.raw_text, settings.evidence_match_threshold) for r in ordered]
     else:
         ordered = [r.model_copy(update={"evidence": ""}) for r in ordered]
 
-    await on_phase("Preparing recommendations")
+    await on_phase(Progress(RECOMMENDATIONS, len(specs), len(batches), len(batches)))
     if CheckKind.recommendations not in checks:
         ordered = [r.model_copy(update={"recommendation": ""}) for r in ordered]
 

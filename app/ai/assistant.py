@@ -9,8 +9,8 @@ WIZARD_SECTIONS: dict[str, tuple[str, ...]] = {
     "Academic context": ("program", "programRole", "purpose", "prerequisites"),
     "Learning outcomes": ("outcomes",),
     "Content": ("modules", "weeks"),
-    "Teaching methods": ("methods",),
-    "Assessment": ("assignments", "final"),
+    "Teaching methods": ("methods", "participation"),
+    "Assessment": ("assignments", "midterm", "project", "final"),
     "Resources": ("resources",),
     "Course policies": ("attendance", "integrity", "appeals"),
 }
