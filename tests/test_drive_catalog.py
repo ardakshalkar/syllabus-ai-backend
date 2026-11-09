@@ -89,6 +89,13 @@ async def test_sync_catalogues_the_files_without_storing_them(ref):
     assert (again.added, again.updated, again.unchanged) == (0, 0, 2)
 
 
+async def test_courses_without_a_lead_are_listed(ref, client_for):
+    await drive_catalog.sync_folder(await _link(ref, _school_folder()))
+    response = await client_for(ref["users"]["provost"]).get("/courses")
+    assert response.status_code == 200, response.text
+    assert any(c["lead_id"] is None for c in response.json())
+
+
 async def test_a_changed_file_becomes_a_new_version_and_a_removed_one_is_hidden(ref, client_for):
     root = _school_folder()
     folder_id = await _link(ref, root)
