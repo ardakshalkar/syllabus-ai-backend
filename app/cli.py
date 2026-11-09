@@ -8,8 +8,11 @@ import logging
 import re
 from pathlib import Path
 
+import sqlalchemy as sa
+
 from app.db import pg
 from app.db.mongo import close_mongo, init_mongo
+from app.enums import Role
 
 RUBRIC = Path(__file__).resolve().parents[1] / "rubric" / "2026.1.yaml"
 
@@ -20,6 +23,42 @@ async def _import_rubric(path: Path, activate: bool) -> None:
     async with pg.session_scope() as session:
         rubric = await import_rubric(session, path, activate=activate)
         print(f"imported rubric {rubric.code} (active={rubric.is_active})")
+
+
+async def _add_user(args: argparse.Namespace) -> None:
+    """There is no API for provisioning people, so staff are added here (see README)."""
+    from app.models import Program, RoleAssignment, School, User
+
+    async with pg.session_scope() as session:
+        user = await session.scalar(sa.select(User).where(sa.func.lower(User.email) == args.email.lower()))
+        if user is None:
+            user = User(email=args.email, name=args.name, title=args.title)
+            session.add(user)
+            await session.flush()
+        school_id = program_id = None
+        if args.school:
+            school_id = await session.scalar(sa.select(School.id).where(School.slug == args.school))
+            if school_id is None:
+                raise SystemExit(f"no School with slug {args.school!r}")
+        if args.program:
+            program_id = await session.scalar(sa.select(Program.id).where(Program.slug == args.program))
+            if program_id is None:
+                raise SystemExit(f"no program with slug {args.program!r}")
+        role = Role(args.role)
+        already = await session.scalar(
+            sa.select(RoleAssignment.id).where(
+                RoleAssignment.user_id == user.id,
+                RoleAssignment.role == role,
+                RoleAssignment.school_id == school_id,
+                RoleAssignment.program_id == program_id,
+            )
+        )
+        if already is None:
+            session.add(
+                RoleAssignment(user_id=user.id, role=role, school_id=school_id, program_id=program_id)
+            )
+        scope = args.school or args.program
+        print(f"{args.email}: {role.value}" + (f" scoped to {scope}" if scope else ""))
 
 
 async def _seed() -> None:
