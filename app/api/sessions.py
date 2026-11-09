@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Query, status
+import sqlalchemy as sa
+from fastapi import APIRouter, Query, Response, status
 
 from app.deps import CurrentUser, DbSession
 from app.models import CheckSession, User
@@ -53,6 +54,14 @@ async def items(
 ):
     await sessions.get_session_obj(session, principal, session_id)
     return await sessions.items(session, session_id, limit=limit, offset=offset)
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete(session_id: uuid.UUID, principal: CurrentUser, session: DbSession) -> Response:
+    cs = await sessions.get_session_obj(session, principal, session_id)
+    await sessions.delete(session, principal, cs)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/sessions/{session_id}/pause", response_model=SessionOut)

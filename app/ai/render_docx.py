@@ -30,8 +30,16 @@ WIZARD_LAYOUT: list[tuple[str, list[tuple[str, str]]]] = [
     ("Course purpose", [("purpose", "")]),
     ("Learning outcomes", [("outcomes", "")]),
     ("Content", [("modules", "Modules"), ("weeks", "")]),
-    ("Teaching methods", [("methods", "")]),
-    ("Assessment", [("assignments", ""), ("final", "")]),
+    ("Teaching methods", [("methods", ""), ("participation", "Active participation")]),
+    (
+        "Assessment",
+        [
+            ("assignments", ""),
+            ("midterm", "Midterm weight"),
+            ("project", "Project weight"),
+            ("final", "Final weight"),
+        ],
+    ),
     ("Resources", [("resources", "")]),
     (
         "Course policy",

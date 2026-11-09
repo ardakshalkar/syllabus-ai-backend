@@ -13,13 +13,13 @@ class SyllabusOut(Schema):
     course_id: uuid.UUID
     course_name: str
     course_slug: str
-    course_lead_id: uuid.UUID
+    course_lead_id: uuid.UUID | None = Field(description="None for a course read from Google Drive")
     program_id: uuid.UUID
     program_name: str
     school_id: uuid.UUID
     school_name: str
-    professor_id: uuid.UUID
-    professor_name: str
+    professor_id: uuid.UUID | None
+    professor_name: str | None
     language: str
     semester: str
     current_version: int
@@ -28,6 +28,16 @@ class SyllabusOut(Schema):
     issues: int | None
     folder_path: str | None
     updated_at: datetime
+    discipline: str | None = Field(
+        default=None, description="its Drive folder, for a syllabus read from Drive"
+    )
+    drive_link: str | None = Field(default=None, description="the current version's file in Google Drive")
+    in_drive: bool = Field(default=False, description="the current version is read from Google Drive")
+    drive_missing: bool = Field(default=False, description="the file is no longer in its Drive folder")
+    last_checked_version: int | None = None
+    drive_changed: bool = Field(
+        default=False, description="the file changed in Drive after its last check: check it again"
+    )
 
 
 class TransitionOption(Schema):
@@ -38,6 +48,9 @@ class TransitionOption(Schema):
 
 class SyllabusDetail(SyllabusOut):
     is_course_lead: bool
+    can_check: bool = Field(
+        default=False, description="may start an AI check: the lead or the School's managers"
+    )
     available_transitions: list[TransitionOption]
     latest_run_id: uuid.UUID | None
 
@@ -57,10 +70,31 @@ class VersionOut(Schema):
     content_type: str
     size: int
     created_at: datetime
-    created_by: uuid.UUID
+    created_by: uuid.UUID | None
     created_by_name: str | None = None
     issue_count: int | None
     source: VersionSource
+    drive_synced_at: datetime | None
+    drive_modified_at: datetime | None = Field(default=None, description="when the file changed in Drive")
+
+
+class RunProgress(Schema):
+    """Where a Queued or Processing check is, for the progress window. Times are estimates."""
+
+    phase: str = Field(description='e.g. "Evaluating 45 criteria (3/9 principles)", or "Queued"')
+    step: int = Field(description="index into `steps` of the step being done")
+    steps: list[str]
+    percent: int = Field(ge=0, le=99)
+    principles_done: int
+    principles_total: int
+    running: list[str] = Field(description='principles being evaluated right now, e.g. "4. Assessment"')
+    started_at: datetime | None
+    elapsed_s: int
+    eta_s: int = Field(description="estimated seconds until the check finishes")
+    eta_at: datetime = Field(description="estimated time the check finishes")
+    queue_position: int | None = Field(
+        default=None, description="Queued only: checks waiting ahead of this one"
+    )
 
 
 class RunOut(Schema):
@@ -73,6 +107,9 @@ class RunOut(Schema):
     session_id: uuid.UUID | None
     checks: list[CheckKind]
     status: RunStatus
+    # While Processing: what the worker is doing, e.g. "Evaluating 45 criteria (3/9 principles)".
+    phase: str | None = None
+    progress: RunProgress | None = None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None

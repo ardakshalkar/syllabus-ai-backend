@@ -7,10 +7,21 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extraction import SUPPORTED_TYPES
-from app.auth.rbac import Principal, syllabus_filter
+from app.auth.client import get_auth_client
+from app.auth.rbac import Principal, forbidden, syllabus_filter
 from app.config import get_settings
-from app.enums import AiStatus, ApprovalStage, VersionSource
-from app.models import ApprovalEvent, Course, Program, School, Syllabus, SyllabusVersion, UploadFolder, User
+from app.enums import AiStatus, ApprovalStage, RunStatus, VersionSource
+from app.models import (
+    ApprovalEvent,
+    AssessmentRun,
+    Course,
+    Program,
+    School,
+    Syllabus,
+    SyllabusVersion,
+    UploadFolder,
+    User,
+)
 from app.storage import files
 
 
@@ -85,6 +96,18 @@ def validate_upload(filename: str, data: bytes) -> str:
     return SUPPORTED_TYPES[suffix]
 
 
+async def _school_folder(session: AsyncSession, syllabus: Syllabus) -> uuid.UUID | None:
+    """Professors upload without choosing a folder: the file goes to their School's folder for the semester."""
+    return await session.scalar(
+        sa.select(UploadFolder.id)
+        .join(Program, Program.school_id == UploadFolder.school_id)
+        .join(Course, Course.program_id == Program.id)
+        .where(Course.id == syllabus.course_id, UploadFolder.semester == syllabus.semester)
+        .order_by(UploadFolder.drive_folder_id.is_(None), UploadFolder.path)
+        .limit(1)
+    )
+
+
 async def add_version(
     session: AsyncSession,
     syllabus: Syllabus,
@@ -96,7 +119,11 @@ async def add_version(
     folder_id: uuid.UUID | None = None,
 ) -> SyllabusVersion:
     """Store a new immutable version. The syllabus re-enters the workflow at Draft until its check completes."""
+    folder_id = folder_id or syllabus.folder_id or await _school_folder(session, syllabus)
     content_type = validate_upload(filename, data)
+    email = await session.scalar(sa.select(User.email).where(User.id == user_id))
+    if not email or not await get_auth_client().verify_account(email):
+        raise forbidden("This account may not store files in Google Drive")
     number = syllabus.current_version + 1
     stored = files.save_version_file(syllabus.id, number, filename, data)
     version = SyllabusVersion(
@@ -109,7 +136,7 @@ async def add_version(
         sha256=stored.sha256,
         created_by=user_id,
         source=source,
-        folder_id=folder_id or syllabus.folder_id,
+        folder_id=folder_id,
     )
     session.add(version)
     previous_stage = syllabus.approval_stage
@@ -145,15 +172,33 @@ class SyllabusFilters:
     language: str | None = None
     q: str | None = None
     mine: bool = False
+    discipline: str | None = None
+    # Syllabi whose file left Google Drive are hidden unless asked for.
+    include_missing: bool = False
 
 
 def syllabus_rows_query(principal: Principal) -> sa.Select:
+    current = sa.and_(
+        SyllabusVersion.syllabus_id == Syllabus.id, SyllabusVersion.version == Syllabus.current_version
+    )
+    current_drive_file = sa.select(SyllabusVersion.drive_file_id).where(current).scalar_subquery()
+    current_source = sa.select(SyllabusVersion.source).where(current).scalar_subquery()
+    last_checked = (
+        sa.select(sa.func.max(SyllabusVersion.version))
+        .join(AssessmentRun, AssessmentRun.version_id == SyllabusVersion.id)
+        .where(SyllabusVersion.syllabus_id == Syllabus.id, AssessmentRun.status == RunStatus.completed)
+        .scalar_subquery()
+    )
     return (
         sa.select(
             Syllabus,
             Course.name.label("course_name"),
             Course.slug.label("course_slug"),
             Course.lead_id,
+            Course.discipline.label("discipline"),
+            current_drive_file.label("current_drive_file_id"),
+            current_source.label("current_source"),
+            last_checked.label("last_checked_version"),
             Program.id.label("program_id"),
             Program.name.label("program_name"),
             School.id.label("school_id"),
@@ -164,7 +209,7 @@ def syllabus_rows_query(principal: Principal) -> sa.Select:
         .join(Course, Course.id == Syllabus.course_id)
         .join(Program, Program.id == Course.program_id)
         .join(School, School.id == Program.school_id)
-        .join(User, User.id == Syllabus.professor_id)
+        .outerjoin(User, User.id == Syllabus.professor_id)
         .outerjoin(UploadFolder, UploadFolder.id == Syllabus.folder_id)
         .where(syllabus_filter(principal))
     )
@@ -187,9 +232,20 @@ def apply_filters(query: sa.Select, f: SyllabusFilters, principal: Principal) ->
         query = query.where(Syllabus.language == f.language)
     if f.q:
         like = f"%{f.q.strip()}%"
-        query = query.where(sa.or_(Course.name.ilike(like), User.name.ilike(like), Program.name.ilike(like)))
+        query = query.where(
+            sa.or_(
+                Course.name.ilike(like),
+                Course.discipline.ilike(like),
+                User.name.ilike(like),
+                Program.name.ilike(like),
+            )
+        )
     if f.mine:
         query = query.where(Course.lead_id == principal.id)
+    if f.discipline:
+        query = query.where(Course.discipline == f.discipline)
+    if not f.include_missing:
+        query = query.where(Syllabus.drive_missing_at.is_(None))
     return query
 
 
@@ -215,7 +271,22 @@ def row_to_dict(row: sa.Row) -> dict:
         "issues": s.issues,
         "folder_path": row.folder_path,
         "updated_at": s.updated_at,
+        "discipline": row.discipline,
+        "drive_link": drive_link(row.current_drive_file_id),
+        "in_drive": row.current_source == VersionSource.drive,
+        "drive_missing": s.drive_missing_at is not None,
+        "last_checked_version": row.last_checked_version,
+        # The file changed in Drive after its last completed check: the current version is not checked yet.
+        "drive_changed": row.current_source == VersionSource.drive
+        and row.last_checked_version is not None
+        and row.last_checked_version < s.current_version,
     }
+
+
+def drive_link(drive_file_id: str | None) -> str | None:
+    from app.services.drive_catalog import drive_link as link
+
+    return link(drive_file_id)
 
 
 async def list_syllabi(

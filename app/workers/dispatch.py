@@ -36,3 +36,19 @@ async def precheck(job_id: str) -> None:
         await run_job(job_id)
         return
     await _send("syllabus.precheck", job_id)
+
+
+async def sync_drive_catalog(school_id: uuid.UUID | None = None) -> None:
+    """Re-read the Schools' Drive folders now (one School's, or all)."""
+    if get_settings().tasks_eager:
+        from app.services.drive_catalog import sync_all
+
+        await sync_all(school_id)
+        return
+    from app.workers.celery_app import celery_app
+
+    await asyncio.to_thread(
+        celery_app.send_task,
+        "syllabus.sync_drive_catalog",
+        args=[str(school_id) if school_id else None, False],
+    )

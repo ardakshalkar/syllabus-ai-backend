@@ -16,10 +16,7 @@ SEMESTER = "Fall 2026"
 
 
 def login(base: str, email: str) -> httpx.Client:
-    client = httpx.Client(base_url=base, timeout=120)
-    token = client.post("/auth/dev-login", json={"email": email}).raise_for_status().json()["access_token"]
-    client.headers["Authorization"] = f"Bearer {token}"
-    return client
+    return httpx.Client(base_url=base, timeout=120, headers={"Authorization": f"Bearer stub:{email}"})
 
 
 def wait(fetch, done, what: str, timeout: float = 600):
