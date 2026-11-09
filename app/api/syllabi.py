@@ -1,13 +1,14 @@
 import difflib
 import uuid
+from urllib.parse import quote
 
 import sqlalchemy as sa
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from app.ai.extraction import ExtractionError
 from app.api.common import run_out, version_out
-from app.auth.rbac import ensure_can_view, ensure_course_lead
+from app.auth.rbac import ensure_can_check, ensure_can_view, ensure_course_lead, manages_school
 from app.deps import CurrentUser, DbSession
 from app.enums import AiStatus, ApprovalStage, RunStatus, Trigger, VersionSource
 from app.models import AssessmentRun, SyllabusVersion, UploadFolder
@@ -27,6 +28,7 @@ from app.schemas.syllabus import (
 from app.services import approval, checks, syllabi
 from app.services.rubric import load_rubric
 from app.storage import files
+from app.storage.drive import explain_error
 from app.workers import dispatch
 
 router = APIRouter(tags=["syllabi"])
@@ -45,11 +47,23 @@ async def list_syllabi(
     language: str | None = None,
     q: str | None = None,
     mine: bool = Query(False, description="Only courses the current user leads"),
+    discipline: str | None = Query(None, description="Drive discipline folder"),
+    include_missing: bool = Query(False, description="Also syllabi whose file left Google Drive"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
     filters = syllabi.SyllabusFilters(
-        semester, school_id, program_id, course_id, ai_status, approval_stage, language, q, mine
+        semester,
+        school_id,
+        program_id,
+        course_id,
+        ai_status,
+        approval_stage,
+        language,
+        q,
+        mine,
+        discipline,
+        include_missing,
     )
     items, total = await syllabi.list_syllabi(session, principal, filters, limit=limit, offset=offset)
     return Page(items=items, total=total, limit=limit, offset=offset)
@@ -81,6 +95,8 @@ async def get_syllabus(syllabus_id: uuid.UUID, principal: CurrentUser, session: 
     return {
         **detail,
         "is_course_lead": detail["course_lead_id"] == principal.id,
+        "can_check": detail["course_lead_id"] == principal.id
+        or manages_school(principal, detail["school_id"]),
         "available_transitions": await approval.available_transitions(session, principal, syllabus),
         "latest_run_id": latest.id if latest else None,
     }
@@ -134,6 +150,13 @@ async def list_versions(syllabus_id: uuid.UUID, principal: CurrentUser, session:
 @router.get("/versions/{version_id}/file")
 async def download_version(version_id: uuid.UUID, principal: CurrentUser, session: DbSession):
     version = await _visible_version(session, principal, version_id)
+    if version.file_path is None:  # read from Google Drive: sent straight from there
+        try:
+            data = await files.read_version(version)
+        except Exception as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Google Drive: {explain_error(exc)}") from exc
+        disposition = f"attachment; filename*=UTF-8''{quote(version.filename)}"
+        return Response(data, media_type=version.content_type, headers={"Content-Disposition": disposition})
     try:
         path = await files.ensure_local(version)
     except FileNotFoundError as exc:
@@ -194,7 +217,8 @@ async def get_run(run_id: uuid.UUID, principal: CurrentUser, session: DbSession)
 async def recheck(version_id: uuid.UUID, principal: CurrentUser, session: DbSession):
     version = await syllabi.get_version(session, version_id)
     syllabus = await syllabi.get_syllabus(session, version.syllabus_id)
-    await ensure_course_lead(session, principal, syllabus.course_id)
+    await ensure_can_view(session, principal, syllabus)
+    await ensure_can_check(session, principal, syllabus.course_id)
     run = await checks.create_run(session, version, trigger=Trigger.professor_manual, user_id=principal.id)
     await session.commit()
     await dispatch.check_run(run.id)

@@ -63,6 +63,7 @@ class VersionSource(StrEnum):
     improve = "improve"
     wizard = "wizard"
     seed = "seed"
+    drive = "drive"
 
 
 class SessionScope(StrEnum):

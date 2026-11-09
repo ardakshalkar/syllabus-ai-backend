@@ -65,7 +65,10 @@ class Course(UUIDPk, Base):
     name: Mapped[str] = mapped_column(sa.String(200))
     program_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("programs.id"), index=True)
     credits: Mapped[int]
-    lead_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"), index=True)
+    # None for a course read from Google Drive: the School's administrators act for it.
+    lead_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id"), index=True)
+    # The Drive folder the syllabus file sits in (a course read from Drive); used to group and filter.
+    discipline: Mapped[str | None] = mapped_column(sa.String(200))
 
     instructors: Mapped[list[User]] = relationship(secondary=course_instructors, lazy="selectin")
 

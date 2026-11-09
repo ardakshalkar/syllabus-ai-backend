@@ -6,7 +6,7 @@ from pydantic import Field
 
 from app.enums import CheckKind, SessionItemStatus, SessionScope, SessionStatus, Trigger
 from app.schemas.common import Schema
-from app.schemas.syllabus import RunOut, VersionOut
+from app.schemas.syllabus import RunOut, RunProgress, VersionOut
 
 
 class SessionCreate(Schema):
@@ -40,7 +40,7 @@ class SessionOut(Schema):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
-    created_by: uuid.UUID
+    created_by: uuid.UUID | None
     created_by_name: str | None
     notify_provost: bool
     notify_school: bool
@@ -56,6 +56,9 @@ class SessionItemOut(Schema):
     filename: str
     version: int
     status: SessionItemStatus
+    # While Processing: what the worker is doing, e.g. "Evaluating 45 criteria (3/9 principles)".
+    phase: str | None = None
+    progress: RunProgress | None = None
     issues: int | None
     error: str | None
     updated_at: datetime
@@ -107,6 +110,7 @@ class PrecheckOut(Schema):
     filename: str
     status: Literal["Queued", "Processing", "Completed", "Failed"]
     phase: str | None
+    progress: RunProgress | None = None
     result: dict | None
     error: str | None
 

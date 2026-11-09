@@ -4,6 +4,7 @@ from app.api import (
     analytics,
     approval,
     catalog,
+    drive,
     improve,
     me,
     notifications,
@@ -17,6 +18,7 @@ api_router = APIRouter()
 for module in (
     me,
     catalog,
+    drive,
     syllabi,
     approval,
     improve,

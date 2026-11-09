@@ -21,7 +21,7 @@ from app.schemas.catalog import (
     SchoolOut,
 )
 from app.services.sessions import ensure_can_manage
-from app.storage import drive
+from app.storage import drive, drive_config
 
 router = APIRouter(tags=["catalog"])
 
@@ -29,8 +29,9 @@ router = APIRouter(tags=["catalog"])
 @router.get("/integrations", response_model=IntegrationsOut)
 async def integrations(_: CurrentUser):
     s = get_settings()
+    drive_provider = (await drive_config.refresh()).provider
     return IntegrationsOut(
-        auth=s.auth_provider, drive=s.drive_provider, email=s.email_backend, llm=s.llm_provider
+        auth=s.auth_provider, drive=drive_provider, email=s.email_backend, llm=s.llm_provider
     )
 
 
@@ -124,6 +125,7 @@ async def _checked_drive_folder(drive_folder_id: str | None) -> str | None:
     cleaned = (drive_folder_id or "").strip()
     if not cleaned:
         return None
+    await drive_config.refresh()
     if not await asyncio.to_thread(drive.get_drive().folder_accessible, cleaned):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "This Drive folder is not accessible")
     return cleaned

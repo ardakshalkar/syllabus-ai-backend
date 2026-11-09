@@ -23,6 +23,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pyyaml>=6.0",
     "rapidfuzz>=3.9",
+    "google-api-python-client>=2.140",
+    "google-auth>=2.30",
 ]
 
 [dependency-groups]

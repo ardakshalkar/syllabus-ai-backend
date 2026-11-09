@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.rbac import Principal, course_context, forbidden
+from app.auth.rbac import Principal, course_context, forbidden, manages_school
 from app.enums import AiStatus, ApprovalStage, Role
 from app.models import ApprovalEvent, Syllabus, User
 from app.services.notifications import notify, users_with_role
@@ -38,7 +38,10 @@ TRANSITIONS: dict[tuple[ApprovalStage, ApprovalStage], Transition] = {
 async def _actor_kind(session: AsyncSession, principal: Principal, syllabus: Syllabus) -> set[str]:
     course, program = await course_context(session, syllabus.course_id)
     kinds = set()
-    if course.lead_id == principal.id:
+    # A course read from Google Drive has no lead: whoever manages its School submits it instead.
+    if course.lead_id == principal.id or (
+        course.lead_id is None and manages_school(principal, program.school_id)
+    ):
         kinds.add("lead")
     if principal.has(Role.program_head) and program.id in principal.program_ids:
         kinds.add("program_head")
@@ -112,14 +115,23 @@ async def _notify_transition(
         title = f"{course.name} syllabus is waiting for KOK review"
     elif to_stage == S.approved:
         recipients = [
-            course.lead_id,
+            *([course.lead_id] if course.lead_id else []),
             *await users_with_role(session, Role.school_admin, school_id=program.school_id),
         ]
         title = f"{course.name} syllabus was approved"
     else:
-        recipients = [course.lead_id]
+        recipients = await _lead_or_school(session, course.lead_id, program.school_id)
         title = f"{course.name} syllabus was returned for revision"
     notify(session, recipients, kind="approval", title=title, body=comment, payload=payload)
+
+
+async def _lead_or_school(
+    session: AsyncSession, lead_id: uuid.UUID | None, school_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """Who acts for the course: its lead, or for a course without one (from Drive) the School's admins."""
+    if lead_id is not None:
+        return [lead_id]
+    return list(await users_with_role(session, Role.school_admin, school_id=school_id))
 
 
 async def add_comment(
@@ -136,11 +148,15 @@ async def add_comment(
         comment=text,
     )
     session.add(event)
-    course, _ = await course_context(session, syllabus.course_id)
+    course, program = await course_context(session, syllabus.course_id)
     if course.lead_id != principal.id:
         notify(
             session,
-            [course.lead_id],
+            [
+                r
+                for r in await _lead_or_school(session, course.lead_id, program.school_id)
+                if r != principal.id
+            ],
             kind="comment",
             title=f"New reviewer comment on {course.name}",
             body=text,

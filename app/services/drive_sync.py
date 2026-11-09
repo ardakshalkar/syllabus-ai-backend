@@ -7,10 +7,9 @@ from pathlib import Path
 
 import sqlalchemy as sa
 
-from app.config import get_settings
 from app.db.pg import session_scope
 from app.models import Course, Syllabus, SyllabusVersion, UploadFolder
-from app.storage import drive, files
+from app.storage import drive, drive_config, files
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +23,7 @@ async def _sync(version: SyllabusVersion, folder_id: str | None, name: str) -> N
     if not folder_id:
         version.drive_error = "No Drive folder is configured"
         return
+    assert version.file_path is not None  # only uploaded versions are waiting to be copied
     try:
         data = await asyncio.to_thread(files.absolute(version.file_path).read_bytes)
         version.drive_file_id = await asyncio.to_thread(
@@ -31,15 +31,21 @@ async def _sync(version: SyllabusVersion, folder_id: str | None, name: str) -> N
         )
     except Exception as exc:
         log.exception("failed to copy version %s to Drive", version.id)
-        version.drive_error = str(exc)[:500]
+        version.drive_error = drive.explain_error(exc)
         return
     version.drive_error = None
     version.drive_synced_at = datetime.now(UTC)
 
 
 async def sync_pending_files(limit: int = 50) -> int:
-    """Outbox worker (celery beat). Least-tried versions go first, so a broken one cannot starve the rest."""
-    default_folder = get_settings().drive_default_folder_id
+    """Outbox worker (celery beat). Least-tried versions go first, so a broken one cannot starve the rest.
+
+    With DRIVE_READ_ONLY nothing is sent: pending versions keep waiting, untouched, until it is switched off.
+    """
+    config = await drive_config.refresh()
+    if config.read_only:
+        return 0
+    default_folder = config.default_folder_id
     async with session_scope() as session:
         rows = (
             await session.execute(
@@ -47,7 +53,7 @@ async def sync_pending_files(limit: int = 50) -> int:
                 .join(Syllabus, Syllabus.id == SyllabusVersion.syllabus_id)
                 .join(Course, Course.id == Syllabus.course_id)
                 .outerjoin(UploadFolder, UploadFolder.id == SyllabusVersion.folder_id)
-                .where(SyllabusVersion.drive_file_id.is_(None))
+                .where(SyllabusVersion.drive_file_id.is_(None), SyllabusVersion.file_path.is_not(None))
                 .order_by(SyllabusVersion.drive_attempts, SyllabusVersion.created_at)
                 .limit(limit)
                 .with_for_update(skip_locked=True, of=SyllabusVersion)

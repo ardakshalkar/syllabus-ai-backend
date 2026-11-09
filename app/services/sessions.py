@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.rbac import Principal, forbidden
+from app.auth.rbac import Principal, forbidden, manages_school
 from app.db.pg import session_scope
 from app.enums import CheckKind, Role, RunStatus, SessionItemStatus, SessionScope, SessionStatus, Trigger
 from app.models import (
@@ -21,7 +21,8 @@ from app.models import (
     SyllabusVersion,
     UploadFolder,
 )
-from app.services.checks import create_run
+from app.services import run_live
+from app.services.checks import create_run, refresh_ai_status
 from app.services.notifications import notify, users_with_role
 from app.workers import dispatch
 
@@ -59,11 +60,11 @@ async def _scope_school(
 
 
 def ensure_can_manage(principal: Principal, school_id: uuid.UUID | None) -> None:
-    if principal.has(Role.provost):
-        return
-    if principal.has(Role.school_admin) and school_id is not None and school_id in principal.school_ids:
-        return
-    raise forbidden("Only the Provost Office, or a School administrator for their School, can run sessions")
+    """Sessions and School folders: Provost Office and KOK everywhere, a School administrator in their School."""
+    if not manages_school(principal, school_id):
+        raise forbidden(
+            "Only the Provost Office, KOK, or a School administrator for their School can do this"
+        )
 
 
 async def create(
@@ -116,7 +117,11 @@ async def _resolve_versions(session: AsyncSession, cs: CheckSession) -> list[tup
             (r[0], r[1])
             for r in (await session.execute(query.where(SyllabusVersion.id == cs.scope_ref))).all()
         ]
-    query = query.where(Syllabus.semester == cs.semester, SyllabusVersion.version == Syllabus.current_version)
+    query = query.where(
+        Syllabus.semester == cs.semester,
+        SyllabusVersion.version == Syllabus.current_version,
+        Syllabus.drive_missing_at.is_(None),  # its file left Google Drive
+    )
     if cs.scope_type == SessionScope.school:
         query = query.where(Program.school_id == cs.scope_ref)
     elif cs.scope_type == SessionScope.program:
@@ -167,6 +172,52 @@ async def resume(session: AsyncSession, principal: Principal, cs: CheckSession) 
             )
         )
     )
+
+
+async def delete(session: AsyncSession, principal: Principal, cs: CheckSession) -> None:
+    """Delete a session in any status, so its checks stop holding up the queue for newer sessions.
+
+    Queued runs are dropped (their tasks still in the broker find nothing and exit). A run in progress is
+    marked Failed; its worker notices at the next phase and stops. Finished runs stay in the syllabus history.
+    """
+    ensure_can_manage(principal, await _scope_school(session, cs.scope_type, cs.scope_ref))
+    await session.execute(sa.select(CheckSession.id).where(CheckSession.id == cs.id).with_for_update())
+    in_session = AssessmentRun.session_id == cs.id
+    open_version_ids = list(
+        await session.scalars(
+            sa.select(AssessmentRun.version_id).where(
+                in_session, AssessmentRun.status.in_((RunStatus.queued, RunStatus.processing))
+            )
+        )
+    )
+    no_sync = {"synchronize_session": False}
+    await session.execute(
+        sa.delete(SessionItem).where(SessionItem.session_id == cs.id), execution_options=no_sync
+    )
+    await session.execute(
+        sa.delete(AssessmentRun).where(in_session, AssessmentRun.status == RunStatus.queued),
+        execution_options=no_sync,
+    )
+    await session.execute(
+        sa.update(AssessmentRun)
+        .where(in_session, AssessmentRun.status == RunStatus.processing)
+        .values(status=RunStatus.failed, error="Cancelled: the session was deleted", completed_at=_now()),
+        execution_options=no_sync,
+    )
+    await session.execute(
+        sa.update(AssessmentRun).where(in_session).values(session_id=None), execution_options=no_sync
+    )
+    if open_version_ids:
+        syllabi = await session.scalars(
+            sa.select(Syllabus)
+            .join(SyllabusVersion, SyllabusVersion.syllabus_id == Syllabus.id)
+            .where(SyllabusVersion.id.in_(open_version_ids))
+            .distinct()
+        )
+        for syllabus in syllabi:
+            await refresh_ai_status(session, syllabus)
+    await session.execute(sa.delete(CheckSession).where(CheckSession.id == cs.id), execution_options=no_sync)
+    session.expunge(cs)
 
 
 async def on_run_finished(session: AsyncSession, run: AssessmentRun, *, ok: bool) -> None:
@@ -281,6 +332,9 @@ async def items(session: AsyncSession, session_id: uuid.UUID, *, limit: int, off
             .offset(offset)
         )
     ).all()
+    live = await run_live.progress(
+        item.run_id for item, *_ in rows if item.run_id and item.status == SessionItemStatus.processing
+    )
     return [
         {
             "id": item.id,
@@ -291,6 +345,8 @@ async def items(session: AsyncSession, session_id: uuid.UUID, *, limit: int, off
             "filename": filename,
             "version": version,
             "status": item.status,
+            "phase": live[item.run_id]["phase"] if item.run_id in live else None,
+            "progress": live.get(item.run_id) if item.run_id else None,
             "issues": issue_count if item.status == SessionItemStatus.done else None,
             "error": item.error,
             "updated_at": item.updated_at,
