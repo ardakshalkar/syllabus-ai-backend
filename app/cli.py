@@ -25,42 +25,6 @@ async def _import_rubric(path: Path, activate: bool) -> None:
         print(f"imported rubric {rubric.code} (active={rubric.is_active})")
 
 
-async def _add_user(args: argparse.Namespace) -> None:
-    """There is no API for provisioning people, so staff are added here (see README)."""
-    from app.models import Program, RoleAssignment, School, User
-
-    async with pg.session_scope() as session:
-        user = await session.scalar(sa.select(User).where(sa.func.lower(User.email) == args.email.lower()))
-        if user is None:
-            user = User(email=args.email, name=args.name, title=args.title)
-            session.add(user)
-            await session.flush()
-        school_id = program_id = None
-        if args.school:
-            school_id = await session.scalar(sa.select(School.id).where(School.slug == args.school))
-            if school_id is None:
-                raise SystemExit(f"no School with slug {args.school!r}")
-        if args.program:
-            program_id = await session.scalar(sa.select(Program.id).where(Program.slug == args.program))
-            if program_id is None:
-                raise SystemExit(f"no program with slug {args.program!r}")
-        role = Role(args.role)
-        already = await session.scalar(
-            sa.select(RoleAssignment.id).where(
-                RoleAssignment.user_id == user.id,
-                RoleAssignment.role == role,
-                RoleAssignment.school_id == school_id,
-                RoleAssignment.program_id == program_id,
-            )
-        )
-        if already is None:
-            session.add(
-                RoleAssignment(user_id=user.id, role=role, school_id=school_id, program_id=program_id)
-            )
-        scope = args.school or args.program
-        print(f"{args.email}: {role.value}" + (f" scoped to {scope}" if scope else ""))
-
-
 async def _seed() -> None:
     from seed.demo import run
 
@@ -105,7 +69,6 @@ async def _drive_check(folder_ids: list[str], write: bool) -> bool:
 
 
 async def _setup_schools() -> None:
-    import sqlalchemy as sa
 
     from app.models import RubricVersion
     from app.services.demo_users import setup_schools
@@ -135,7 +98,6 @@ async def _add_test_users(instructor: bool) -> None:
 async def _requeue_runs(include_sessions: bool) -> None:
     """Send Queued runs to the broker again, e.g. after Redis lost its queue (it keeps no data on restart).
     A run that is already queued or done ignores the extra message (checks.execute_run is idempotent)."""
-    import sqlalchemy as sa
 
     from app.enums import RunStatus
     from app.models import AssessmentRun
@@ -185,6 +147,33 @@ async def _drive_setup(args: argparse.Namespace) -> None:
         )
 
 
+async def _users(args: argparse.Namespace) -> None:
+    from app.services import users
+
+    async with pg.session_scope() as session:
+        try:
+            if args.command == "add-user":
+                user, created = await users.add_user(
+                    session,
+                    args.email,
+                    Role(args.role),
+                    name=args.name or args.name_arg,
+                    title=args.title,
+                    school=args.school,
+                    program=args.program,
+                )
+                print(f"{'created' if created else 'updated'} {user.email}")
+            elif args.command == "disable-user":
+                user = await users.disable_user(session, args.email)
+                print(f"disabled {user.email}: their sign-ins are refused from now on")
+        except users.UserError as exc:
+            raise SystemExit(f"error: {exc}") from exc
+        for user, roles in await users.list_users(session):
+            if args.command == "list-users" or user.email == args.email.strip().lower():
+                state = "" if user.is_active else "  [disabled]"
+                print(f"{user.email}{state}\n  " + ("\n  ".join(roles) or "no roles"))
+
+
 async def _create_db() -> None:
     """Create the database named in DATABASE_URL if it does not exist yet (the separate one for real data)."""
     import asyncpg
@@ -220,6 +209,8 @@ async def _main(args: argparse.Namespace) -> None:
             await _drive_setup(args)
         elif args.command == "requeue-runs":
             await _requeue_runs(args.all)
+        elif args.command in ("add-user", "list-users", "disable-user"):
+            await _users(args)
         elif args.command == "setup-schools":
             await _setup_schools()
         elif args.command == "add-test-users":
@@ -262,6 +253,26 @@ def main() -> None:
         "setup-schools",
         help="create the University's four Schools, and the rubric in a new database (idempotent)",
     )
+    add_user = sub.add_parser(
+        "add-user", help="give a person a role (creates the user); they sign in with their Google account"
+    )
+    add_user.add_argument("email")
+    # Also accepted positionally (`add-user EMAIL "Full Name" --role …`), the form PR #1 introduced.
+    add_user.add_argument("name_arg", nargs="?", metavar="name", help="display name (same as --name)")
+    add_user.add_argument(
+        "--role", required=True, choices=["provost", "kok", "school_admin", "program_head", "professor"]
+    )
+    add_user.add_argument(
+        "--school", help="school_admin / program_head: economics, humanities, law, digital (or slug / name)"
+    )
+    add_user.add_argument("--name", help="display name (default: the email, replaced by the Google name)")
+    add_user.add_argument("--title", help="job title, e.g. Associate Professor")
+    add_user.add_argument(
+        "--program", help="program_head: the program's slug (default: the School's program)"
+    )
+    sub.add_parser("list-users", help="every user with their roles")
+    disable = sub.add_parser("disable-user", help="refuse this person's sign-ins from now on")
+    disable.add_argument("email")
     users = sub.add_parser(
         "add-test-users",
         help="add KOK, School admin, Program head and professor users to this database (not in prod)",

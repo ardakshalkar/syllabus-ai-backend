@@ -4,8 +4,6 @@ from typing import Annotated
 
 from pydantic import Field
 
-from pydantic import Field
-
 from app.enums import EvaluationType, Role
 from app.schemas.common import Schema
 
@@ -59,7 +57,8 @@ class CourseOut(Schema):
     name: str
     program_id: uuid.UUID
     credits: int
-    lead_id: uuid.UUID
+    # None for a course read from Google Drive (services/drive_catalog.py).
+    lead_id: uuid.UUID | None
     instructor_ids: list[uuid.UUID]
 
 

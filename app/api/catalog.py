@@ -4,11 +4,11 @@ import uuid
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, status
 
-from app.auth.rbac import forbidden
+from app.auth.rbac import forbidden, manages_school
 from app.config import get_settings
 from app.deps import CurrentUser, DbSession
 from app.enums import AiStatus, Role
-from app.models import Course, Program, RubricVersion, School, Syllabus, UploadFolder, User
+from app.models import Course, Program, RubricVersion, School, Syllabus, SyllabusVersion, UploadFolder, User
 from app.models.org import course_instructors
 from app.schemas.catalog import (
     CourseIn,
@@ -102,8 +102,8 @@ async def _commit(session: DbSession, conflict: str) -> None:
 
 @router.post("/schools", response_model=SchoolOut, status_code=status.HTTP_201_CREATED)
 async def create_school(body: SchoolIn, principal: CurrentUser, session: DbSession):
-    if not principal.has(Role.provost):
-        raise forbidden("Only the Provost Office can add a School")
+    if not principal.has(Role.provost, Role.kok):
+        raise forbidden("Only the Provost Office or KOK can add a School")
     school = School(slug=body.slug, name=body.name.strip())
     session.add(school)
     await _commit(session, "A School with this slug already exists")
@@ -112,7 +112,7 @@ async def create_school(body: SchoolIn, principal: CurrentUser, session: DbSessi
 
 @router.post("/programs", response_model=ProgramOut, status_code=status.HTTP_201_CREATED)
 async def create_program(body: ProgramIn, principal: CurrentUser, session: DbSession):
-    # The Provost Office, or the administrator of the School the program belongs to.
+    # The Provost Office, KOK, or the administrator of the School the program belongs to.
     ensure_can_manage(principal, body.school_id)
     if await session.get(School, body.school_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found")
@@ -133,14 +133,12 @@ async def create_course(body: CourseIn, principal: CurrentUser, session: DbSessi
     program = await session.get(Program, body.program_id)
     if program is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Program not found")
-    may_add = (
-        principal.has(Role.provost)
-        or (principal.has(Role.school_admin) and program.school_id in principal.school_ids)
-        or (principal.has(Role.program_head) and program.id in principal.program_ids)
+    may_add = manages_school(principal, program.school_id) or (
+        principal.has(Role.program_head) and program.id in principal.program_ids
     )
     if not may_add:
         raise forbidden(
-            "Only the Provost Office, the School administrator or the program head can add a course"
+            "Only the Provost Office, KOK, the School administrator or the program head can add a course"
         )
     # The lead teaches the course, so they join the instructors whether or not they were listed.
     wanted = list(dict.fromkeys([body.lead_id, *body.instructor_ids]))
@@ -170,14 +168,12 @@ async def create_course(body: CourseIn, principal: CurrentUser, session: DbSessi
 
 @router.get("/integrations", response_model=IntegrationsOut)
 async def integrations(_: CurrentUser) -> IntegrationsOut:
+    """What each connection is backed by, for the Settings screen: read from the settings (and for Drive the
+    key uploaded in the app), so the screen cannot drift from what the app really does."""
     s = get_settings()
     return IntegrationsOut(
-        # Google OIDC is the real sign-in. Without client credentials only dev-login is left,
-        # which is why the frontend still offers its demo user switcher.
-        auth="http" if s.google_client_id and s.google_client_secret else "stub",
-        # Drive is not connected: files are uploaded through the API to FILES_ROOT and a School's
-        # folder is a logical path (models.org.UploadFolder), not a Drive folder.
-        drive="stub",
+        auth=s.auth_provider,  # stub, google or http
+        drive=(await drive_config.refresh()).provider,  # stub or google
         email=s.email_backend,
         llm=s.llm_provider,
     )

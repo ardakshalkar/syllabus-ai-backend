@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.client import AuthServiceUnavailable, Identity, InvalidToken, get_auth_client
 from app.auth.rbac import Principal, forbidden
+from app.config import get_settings
 from app.db.pg import get_session
 from app.enums import Role
 from app.models import User
@@ -14,10 +15,11 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 
 
 def _token(request: Request) -> str | None:
+    """The bearer token (CLI, tests, stub), else the session cookie set by the Google sign-in."""
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         return header[7:].strip()
-    return None
+    return request.cookies.get(get_settings().session_cookie_name) or None
 
 
 async def _provisioned_user(session: AsyncSession, identity: Identity) -> User | None:

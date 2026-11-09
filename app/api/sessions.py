@@ -1,6 +1,5 @@
 import uuid
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Query, Response, status
 
 from app.deps import CurrentUser, DbSession
