@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     email_from: str = "syllabus-ai@narxoz.kz"
 
     # External staff / employees API: GET /api/v1/staff/external/employees
-    staff_api_base_url: str = "https://corp-portal.narxoz.kz/api/v1/staff/external/employees"
+    staff_api_base_url: str = "https://corp-portal.narxoz.kz"
     staff_api_token: str = "FTUyv78biruy32fewrh89uoefwTUVy9p8hu4t3"
     staff_api_cache_ttl_s: int = 300
 

@@ -135,7 +135,11 @@ async def fetch_external_employees() -> list[StaffEmployee]:
         return result
 
     # 3. Call the external endpoint
-    url = f"{settings.staff_api_base_url.rstrip('/')}/api/v1/staff/external/employees"
+    base = settings.staff_api_base_url.rstrip("/")
+    if base.endswith("/api/v1/staff/external/employees"):
+        url = base
+    else:
+        url = f"{base}/api/v1/staff/external/employees"
     headers = {}
     if settings.staff_api_token:
         headers["Authorization"] = f"Bearer {settings.staff_api_token}"
