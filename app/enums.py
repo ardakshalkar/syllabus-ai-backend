@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class Role(StrEnum):
+    admin = "admin"  # system administrator: everything provost and KOK see, plus users, roles and the catalog
     provost = "provost"
     school_admin = "school_admin"
     program_head = "program_head"

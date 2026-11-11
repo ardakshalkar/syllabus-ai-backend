@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    admin,
     analytics,
     approval,
     auth,
@@ -17,6 +18,7 @@ from app.api import (
 
 api_router = APIRouter()
 for module in (
+    admin,
     me,
     auth,
     catalog,

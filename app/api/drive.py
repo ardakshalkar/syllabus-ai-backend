@@ -27,13 +27,13 @@ router = APIRouter(prefix="/drive", tags=["drive"])
 
 
 def _viewer(principal: Principal) -> None:
-    if not principal.has(Role.provost, Role.kok, Role.school_admin):
+    if not principal.has(Role.admin, Role.provost, Role.kok, Role.school_admin):
         raise forbidden("Only the Provost Office, KOK and School administrators see the Drive connection")
 
 
 def _admin(principal: Principal) -> None:
-    if not principal.has(Role.provost):
-        raise forbidden("Only the Provost Office can connect Google Drive")
+    if not principal.has(Role.admin, Role.provost):
+        raise forbidden("Only the Provost Office or an administrator can connect Google Drive")
 
 
 def _unprocessable(reason: Exception | str) -> HTTPException:
@@ -120,7 +120,7 @@ async def start_sync(body: DriveSyncIn, principal: CurrentUser) -> dict:
     A School administrator refreshes their School; the Provost Office and KOK any or all."""
     if body.school_id is not None:
         ensure_manages_school(principal, body.school_id)
-    elif not principal.has(Role.provost, Role.kok):
+    elif not principal.university_wide:
         raise forbidden("Choose your School to refresh")
     if await drive_catalog.sync_running():
         raise HTTPException(

@@ -1,5 +1,7 @@
 """Who may see and do what.
 
+- admin: system administrator; everything the Provost Office sees and manages, plus users, roles and the catalog
+  (the Admin screen, app/api/admin.py). Not an approval actor: moving syllabi through approval stays academic.
 - provost, kok: everything, university-wide: see every syllabus and analytics, run checks and sessions anywhere.
 - school_admin: the same within their School.
 - program_head: syllabi of their program; moves Head of Program Review forward or back.
@@ -40,7 +42,7 @@ class Principal:
 
     @property
     def university_wide(self) -> bool:
-        return bool(self.roles & {Role.provost, Role.kok})
+        return bool(self.roles & {Role.admin, Role.provost, Role.kok})
 
     def has(self, *roles: Role) -> bool:
         return bool(self.roles & set(roles))
@@ -51,8 +53,8 @@ def forbidden(detail: str = "You do not have access to this resource") -> HTTPEx
 
 
 def manages_school(principal: Principal, school_id: uuid.UUID | None) -> bool:
-    """Provost Office and KOK manage every School; a School administrator manages their own."""
-    if principal.has(Role.provost, Role.kok):
+    """Admins, the Provost Office and KOK manage every School; a School administrator manages their own."""
+    if principal.has(Role.admin, Role.provost, Role.kok):
         return True
     return principal.has(Role.school_admin) and school_id is not None and school_id in principal.school_ids
 

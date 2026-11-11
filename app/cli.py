@@ -1,11 +1,15 @@
 """Admin commands: `python -m app.cli import-rubric rubric/2026.1.yaml`, `python -m app.cli seed`,
 `python -m app.cli create-db`, `python -m app.cli drive-check`, `python -m app.cli drive-setup <shared folder id>`,
-`python -m app.cli setup-schools`, `python -m app.cli add-test-users`."""
+`python -m app.cli setup-schools`, `python -m app.cli add-test-users [--password]`,
+`python -m app.cli set-password EMAIL`, `python -m app.cli bootstrap` (Schools, rubric and test users at once),
+`python -m app.cli import-users users.csv`."""
 
 import argparse
 import asyncio
+import getpass
 import logging
 import re
+import sys
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -15,6 +19,7 @@ from app.db.mongo import close_mongo, init_mongo
 from app.enums import Role
 
 RUBRIC = Path(__file__).resolve().parents[1] / "rubric" / "2026.1.yaml"
+PROMPT = "\0prompt"  # `--password` given without a value
 
 
 async def _import_rubric(path: Path, activate: bool) -> None:
@@ -82,17 +87,51 @@ async def _setup_schools() -> None:
             print(f"imported rubric {rubric.code}")
 
 
-async def _add_test_users(instructor: bool) -> None:
+def _read_password(value: str | None) -> str | None:
+    """--password VALUE, or --password alone: asked for (not echoed, not in the shell history)."""
+    if value != PROMPT:
+        return value
+    first = getpass.getpass("password: ")
+    if getpass.getpass("again: ") != first:
+        raise SystemExit("error: the passwords differ")
+    return first
+
+
+async def _add_test_users(instructor: bool, password: str | None, allow_prod: bool) -> None:
     from app.services.demo_users import add_demo_users
 
-    async with pg.session_scope() as session:
-        report = await add_demo_users(session, instructor=instructor)
+    try:
+        async with pg.session_scope() as session:
+            report = await add_demo_users(
+                session, instructor=instructor, password=password, allow_prod=allow_prod
+            )
+    except (RuntimeError, ValueError) as exc:
+        raise SystemExit(f"error: {exc}") from exc
     for email, roles in report.roles.items():
         new = " (new)" if email in report.created else ""
-        print(f"{email}{new}\n  token stub:{email}\n  " + "\n  ".join(roles or ["no scope found"]))
+        how = "password set" if password else f"token stub:{email}"
+        print(f"{email}{new}\n  {how}\n  " + "\n  ".join(roles or ["no scope found"]))
     if instructor:
         print(f"\nkarimova@ now co-teaches {report.courses_taught} more course(s)")
-    print("\nPick these users in the frontend's user switcher (sidebar).")
+    if password:
+        print("\nSign in with these emails and the password on the sign-in page.")
+    else:
+        print("\nPick these users in the frontend's user switcher (sidebar).")
+
+
+async def _bootstrap(args: argparse.Namespace) -> None:
+    """setup-schools + add-test-users in one go, for a new server. With --if-enabled (the migrate service runs it
+    at every start) only when SEED_TEST_USERS=true; then TEST_USERS_PASSWORD is the password, and SEED_TEST_USERS
+    itself is the deliberate choice --allow-prod stands for."""
+    from app.config import get_settings
+
+    s = get_settings()
+    if args.if_enabled and not s.seed_test_users:
+        print("bootstrap: SEED_TEST_USERS is not true, nothing to do")
+        return
+    password = _read_password(args.password) if args.password else (s.test_users_password or None)
+    await _setup_schools()
+    await _add_test_users(args.instructor, password, args.allow_prod or args.if_enabled)
 
 
 async def _requeue_runs(include_sessions: bool) -> None:
@@ -161,8 +200,13 @@ async def _users(args: argparse.Namespace) -> None:
                     title=args.title,
                     school=args.school,
                     program=args.program,
+                    password=_read_password(args.password),
                 )
                 print(f"{'created' if created else 'updated'} {user.email}")
+            elif args.command == "set-password":
+                password = None if args.remove else _read_password(args.password or PROMPT)
+                user = await users.set_password(session, args.email, password)
+                print(f"{'removed the password of' if args.remove else 'password set for'} {user.email}")
             elif args.command == "disable-user":
                 user = await users.disable_user(session, args.email)
                 print(f"disabled {user.email}: their sign-ins are refused from now on")
@@ -172,6 +216,30 @@ async def _users(args: argparse.Namespace) -> None:
             if args.command == "list-users" or user.email == args.email.strip().lower():
                 state = "" if user.is_active else "  [disabled]"
                 print(f"{user.email}{state}\n  " + ("\n  ".join(roles) or "no roles"))
+
+
+async def _import_users(text: str) -> None:
+    """CSV from a file, or `-` for stdin (scripts/import_users.sh pipes its list in). The shared password,
+    if any, comes in IMPORT_USERS_PASSWORD: stdin carries the CSV, so it cannot be asked for here."""
+    import os
+
+    from app.services import users
+
+    password = os.environ.get("IMPORT_USERS_PASSWORD") or None
+    async with pg.session_scope() as session:
+        try:
+            report = await users.import_users(session, text, password)
+        except ValueError as exc:  # a password shorter than passwords.MIN_LENGTH
+            raise SystemExit(f"error: {exc}") from exc
+        if report.errors:
+            await session.rollback()
+            raise SystemExit("nothing was imported, fix these lines first:\n  " + "\n  ".join(report.errors))
+    for email in report.created:
+        print(f"created  {email}")
+    for email in report.updated:
+        print(f"updated  {email}")
+    how = "with the password" if password else "with Google (no password)"
+    print(f"\n{len(report.created)} created, {len(report.updated)} updated; they sign in {how}.")
 
 
 async def _create_db() -> None:
@@ -209,12 +277,16 @@ async def _main(args: argparse.Namespace) -> None:
             await _drive_setup(args)
         elif args.command == "requeue-runs":
             await _requeue_runs(args.all)
-        elif args.command in ("add-user", "list-users", "disable-user"):
+        elif args.command in ("add-user", "list-users", "disable-user", "set-password"):
             await _users(args)
         elif args.command == "setup-schools":
             await _setup_schools()
+        elif args.command == "import-users":
+            await _import_users(args.text)
+        elif args.command == "bootstrap":
+            await _bootstrap(args)
         elif args.command == "add-test-users":
-            await _add_test_users(args.instructor)
+            await _add_test_users(args.instructor, _read_password(args.password), args.allow_prod)
         elif args.command == "drive-check":
             if not await _drive_check(args.folder, args.write):
                 raise SystemExit(1)
@@ -259,9 +331,7 @@ def main() -> None:
     add_user.add_argument("email")
     # Also accepted positionally (`add-user EMAIL "Full Name" --role …`), the form PR #1 introduced.
     add_user.add_argument("name_arg", nargs="?", metavar="name", help="display name (same as --name)")
-    add_user.add_argument(
-        "--role", required=True, choices=["provost", "kok", "school_admin", "program_head", "professor"]
-    )
+    add_user.add_argument("--role", required=True, choices=[r.value for r in Role])
     add_user.add_argument(
         "--school", help="school_admin / program_head: economics, humanities, law, digital (or slug / name)"
     )
@@ -270,6 +340,18 @@ def main() -> None:
     add_user.add_argument(
         "--program", help="program_head: the program's slug (default: the School's program)"
     )
+    add_user.add_argument(
+        "--password",
+        nargs="?",
+        const=PROMPT,
+        help="also allow email + password sign-in; without a value it is asked for",
+    )
+    set_password = sub.add_parser(
+        "set-password", help="set a user's password for email + password sign-in (asked for if not given)"
+    )
+    set_password.add_argument("email")
+    set_password.add_argument("--password", help="the password (default: asked for, not echoed)")
+    set_password.add_argument("--remove", action="store_true", help="remove the password instead")
     sub.add_parser("list-users", help="every user with their roles")
     disable = sub.add_parser("disable-user", help="refuse this person's sign-ins from now on")
     disable.add_argument("email")
@@ -282,6 +364,36 @@ def main() -> None:
         action="store_true",
         help="also make the professor a co-instructor of every course (to try the non-lead view)",
     )
+    users.add_argument(
+        "--password",
+        nargs="?",
+        const=PROMPT,
+        help="give every test user this password (email + password sign-in); without a value it is asked for",
+    )
+    users.add_argument(
+        "--allow-prod",
+        action="store_true",
+        help="create them even with ENV=prod (needs --password)",
+    )
+    imp = sub.add_parser(
+        "import-users",
+        help="add many users from a CSV file: email,role,school,program,name,title (all or nothing, idempotent)",
+    )
+    imp.add_argument("path", help="the CSV file, or - for stdin; password for all: IMPORT_USERS_PASSWORD")
+    boot = sub.add_parser(
+        "bootstrap",
+        help="new server: the Schools, the rubric and the test users of every role at once (idempotent)",
+    )
+    boot.add_argument(
+        "--if-enabled",
+        action="store_true",
+        help="only when SEED_TEST_USERS=true (password: TEST_USERS_PASSWORD); used by docker compose at start-up",
+    )
+    boot.add_argument(
+        "--password", nargs="?", const=PROMPT, help="the test users' password (default: TEST_USERS_PASSWORD)"
+    )
+    boot.add_argument("--instructor", action="store_true", help="as add-test-users --instructor")
+    boot.add_argument("--allow-prod", action="store_true", help="as add-test-users --allow-prod")
     check = sub.add_parser(
         "drive-check", help="check the Google Drive credentials and folders (GOOGLE_DRIVE_SETUP.md)"
     )
@@ -296,6 +408,8 @@ def main() -> None:
         "--write", action="store_true", help="also upload a small test file to each folder and delete it"
     )
     args = parser.parse_args()
+    if args.command == "import-users":  # read before the event loop: file and stdin reads block
+        args.text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8")
     if args.command == "create-db":
         asyncio.run(_create_db())
         return

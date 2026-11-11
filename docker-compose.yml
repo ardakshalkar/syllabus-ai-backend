@@ -62,7 +62,8 @@ services:
 
   migrate:
     <<: *app
-    command: ["sh", "-c", "python -m app.cli create-db && alembic upgrade head"]
+    # bootstrap --if-enabled: Schools, rubric and test users when SEED_TEST_USERS=true in .env (idempotent).
+    command: ["sh", "-c", "python -m app.cli create-db && alembic upgrade head && python -m app.cli bootstrap --if-enabled"]
     restart: "no"
 
   api:

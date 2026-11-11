@@ -111,10 +111,24 @@ class GoogleSessionAuthClient:
         return not domain or email.lower().endswith(f"@{domain}")
 
 
+class PasswordSessionAuthClient:
+    """AUTH_PROVIDER=password. Password sessions are resolved in app/deps.py before any auth client is asked,
+    so a token that reaches this client is not one this app issued."""
+
+    async def verify_token(self, token: str) -> Identity:
+        raise InvalidToken("not a session of this app")
+
+    async def verify_account(self, email: str) -> bool:
+        # Every user here was created by an administrator (add-user / add-test-users).
+        return True
+
+
 def get_auth_client() -> AuthClient:
     provider = get_settings().auth_provider
     if provider == "stub":
         return StubAuthClient()
     if provider == "google":
         return GoogleSessionAuthClient()
+    if provider == "password":
+        return PasswordSessionAuthClient()
     return HttpAuthClient()
