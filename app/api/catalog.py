@@ -324,7 +324,18 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
     """
     schools = (await session.scalars(sa.select(School).order_by(School.name))).all()
     if not principal.university_wide:
-        schools = [s for s in schools if s.id in principal.school_ids]
+        # A Head of Program is scoped to a program, not a School, but collection is reported per School:
+        # resolve the Schools their programs belong to, so a Head can see where their own stands.
+        visible = set(principal.school_ids)
+        if principal.program_ids:
+            visible |= set(
+                (
+                    await session.scalars(
+                        sa.select(Program.school_id).where(Program.id.in_(principal.program_ids))
+                    )
+                ).all()
+            )
+        schools = [s for s in schools if s.id in visible]
     folders = {
         f.school_id: f
         for f in await session.scalars(
