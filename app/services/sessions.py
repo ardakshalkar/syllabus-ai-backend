@@ -293,24 +293,68 @@ async def progress(session: AsyncSession, session_id: uuid.UUID) -> dict[str, in
 
 async def get_session_obj(session: AsyncSession, principal: Principal, session_id: uuid.UUID) -> CheckSession:
     cs = await session.get(CheckSession, session_id)
-    if cs is None or not _visible(principal, cs, await _scope_school(session, cs.scope_type, cs.scope_ref)):
+    if cs is None or not await _can_read(session, principal, cs):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     return cs
 
 
-def _visible(principal: Principal, cs: CheckSession, school_id: uuid.UUID | None) -> bool:
+async def _scope_program(
+    session: AsyncSession, scope: SessionScope, ref: uuid.UUID | None
+) -> uuid.UUID | None:
+    """The program the scope names, when it names one: the program itself, or the file's own program."""
+    if ref is None:
+        return None
+    if scope == SessionScope.program:
+        return ref
+    if scope == SessionScope.file:
+        return await session.scalar(
+            sa.select(Course.program_id)
+            .join(Syllabus, Syllabus.course_id == Course.id)
+            .join(SyllabusVersion, SyllabusVersion.syllabus_id == Syllabus.id)
+            .where(SyllabusVersion.id == ref)
+        )
+    return None
+
+
+async def _head_school_ids(session: AsyncSession, principal: Principal) -> set[uuid.UUID]:
+    """The Schools a Head of Program's programs belong to; a Head carries no school_id of their own."""
+    if not principal.program_ids:
+        return set()
+    return set(
+        await session.scalars(sa.select(Program.school_id).where(Program.id.in_(principal.program_ids)))
+    )
+
+
+async def _can_read(
+    session: AsyncSession,
+    principal: Principal,
+    cs: CheckSession,
+    head_schools: set[uuid.UUID] | None = None,
+) -> bool:
+    """Who may read a session. Starting, pausing, resuming and deleting are each checked separately
+    against ensure_can_manage, so being able to follow a session never implies controlling it."""
     if principal.university_wide or cs.created_by == principal.id:
         return True
-    return principal.has(Role.school_admin) and school_id in principal.school_ids
+    school_id = await _scope_school(session, cs.scope_type, cs.scope_ref)
+    if principal.has(Role.school_admin) and school_id in principal.school_ids:
+        return True
+    if principal.has(Role.program_head) and principal.program_ids:
+        # A Head of Program follows the checks that cover their own program without starting any.
+        program_id = await _scope_program(session, cs.scope_type, cs.scope_ref)
+        if program_id is not None:
+            return program_id in principal.program_ids
+        # A university check covers every program; a School or folder covers the Heads inside that School.
+        if school_id is None:
+            return True
+        schools = await _head_school_ids(session, principal) if head_schools is None else head_schools
+        return school_id in schools
+    return False
 
 
 async def list_sessions(session: AsyncSession, principal: Principal) -> list[CheckSession]:
     rows = list(await session.scalars(sa.select(CheckSession).order_by(CheckSession.created_at.desc())))
-    return [
-        cs
-        for cs in rows
-        if _visible(principal, cs, await _scope_school(session, cs.scope_type, cs.scope_ref))
-    ]
+    head_schools = await _head_school_ids(session, principal)
+    return [cs for cs in rows if await _can_read(session, principal, cs, head_schools)]
 
 
 async def items(session: AsyncSession, session_id: uuid.UUID, *, limit: int, offset: int) -> list[dict]:
