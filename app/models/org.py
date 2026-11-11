@@ -21,6 +21,8 @@ class User(UUIDPk, CreatedAt, Base):
     name: Mapped[str] = mapped_column(sa.String(200))
     title: Mapped[str | None] = mapped_column(sa.String(120))
     external_id: Mapped[str | None] = mapped_column(sa.String(255), unique=True)
+    # scrypt hash (app/auth/passwords.py); None: this user cannot sign in with a password.
+    password_hash: Mapped[str | None] = mapped_column(sa.String(255))
     is_active: Mapped[bool] = mapped_column(default=True)
 
     roles: Mapped[list["RoleAssignment"]] = relationship(back_populates="user", lazy="selectin")

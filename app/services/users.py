@@ -7,11 +7,18 @@ Google sign-in only proves who someone is; a person can use the app once they ex
   add-user sidorov@narxoz.kz --role professor
 A School is given by its key (economics, humanities, law, digital), slug or full name. Running add-user again
 adds another role; existing roles stay.
+
+Many at once: `python -m app.cli import-users users.csv` (or scripts/import_users.sh on a server), see import_users.
 """
+
+import csv
+import io
+from dataclasses import dataclass, field
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import passwords
 from app.enums import Role
 from app.models import Program, RoleAssignment, School, User
 from app.services.demo_users import SCHOOLS
@@ -49,8 +56,9 @@ async def add_user(
     title: str | None = None,
     school: str | None = None,
     program: str | None = None,
+    password: str | None = None,
 ) -> tuple[User, bool]:
-    """Create the user if needed and give them the role. Returns (user, created)."""
+    """Create the user if needed and give them the role (and a password, if given). Returns (user, created)."""
     email = email.strip().lower()
     if "@" not in email:
         raise UserError(f"not an email: {email!r}")
@@ -86,6 +94,8 @@ async def add_user(
         user.name = name or user.name
         user.title = title or user.title
     user.is_active = True
+    if password is not None:
+        user.password_hash = _hash(password)
     if not any(
         r.role == role and r.school_id == school_id and r.program_id == program_id for r in user.roles
     ):
@@ -109,6 +119,22 @@ async def list_users(session: AsyncSession) -> list[tuple[User, list[str]]]:
     return result
 
 
+def _hash(password: str) -> str:
+    try:
+        return passwords.hash_password(password)
+    except ValueError as exc:
+        raise UserError(str(exc)) from exc
+
+
+async def set_password(session: AsyncSession, email: str, password: str | None) -> User:
+    """Set (or with None remove) the user's password. Their other password sessions end."""
+    user = await session.scalar(sa.select(User).where(sa.func.lower(User.email) == email.strip().lower()))
+    if user is None:
+        raise UserError(f"no user {email!r}: add-user first")
+    user.password_hash = _hash(password) if password is not None else None
+    return user
+
+
 async def disable_user(session: AsyncSession, email: str) -> User:
     """Sign-ins and requests of this user are refused from now on; their history stays."""
     user = await session.scalar(sa.select(User).where(sa.func.lower(User.email) == email.strip().lower()))
@@ -116,3 +142,58 @@ async def disable_user(session: AsyncSession, email: str) -> User:
         raise UserError(f"no user {email!r}")
     user.is_active = False
     return user
+
+
+IMPORT_COLUMNS = ("email", "role", "school", "program", "name", "title")
+
+
+@dataclass
+class ImportReport:
+    created: list[str] = field(default_factory=list)
+    updated: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+async def import_users(session: AsyncSession, text: str, password: str | None = None) -> ImportReport:
+    """Users from CSV text with the header `email,role,school,program,name,title` (only email and role are
+    required; `#` lines and blank lines are skipped). A person with several roles takes one line per role.
+    Each line is add_user, so importing the same file again only adds what is missing. `password`: given
+    to every imported user (email + password sign-in); without it they sign in with Google.
+    All or nothing: when any line is wrong, `errors` lists them and the caller must roll back."""
+    report = ImportReport()
+    lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    rows = list(csv.DictReader(io.StringIO("\n".join(lines)), skipinitialspace=True))
+    if not lines or "email" not in (rows[0].keys() if rows else lines[0].split(",")):
+        report.errors.append(f"the first line must be the header: {','.join(IMPORT_COLUMNS)}")
+        return report
+    if unknown := set(rows[0].keys() if rows else []) - set(IMPORT_COLUMNS):
+        report.errors.append(
+            f"unknown column(s) {', '.join(sorted(map(str, unknown)))}: use {','.join(IMPORT_COLUMNS)}"
+        )
+        return report
+    for number, row in enumerate(rows, start=2):
+        value = {k: (row.get(k) or "").strip() or None for k in IMPORT_COLUMNS}
+        try:
+            role = Role((value["role"] or "").lower())
+        except ValueError:
+            report.errors.append(f"line {number}: role must be one of {', '.join(r.value for r in Role)}")
+            continue
+        try:
+            user, created = await add_user(
+                session,
+                value["email"] or "",
+                role,
+                name=value["name"],
+                title=value["title"],
+                school=value["school"],
+                program=value["program"],
+                password=password,
+            )
+        except UserError as exc:
+            report.errors.append(f"line {number} ({value['email']}): {exc}")
+            continue
+        if created:
+            report.created.append(user.email)
+        elif user.email not in report.created and user.email not in report.updated:
+            report.updated.append(user.email)
+    return report

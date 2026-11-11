@@ -1,10 +1,12 @@
-"""Google Workspace sign-in (AUTH_PROVIDER=google). The flow is described in app/auth/google.py."""
+"""Google Workspace sign-in (AUTH_PROVIDER=google, flow in app/auth/google.py) and email + password sign-in
+(AUTH_PROVIDER=password or PASSWORD_LOGIN=true, app/auth/passwords.py)."""
 
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 
-from app.auth import google
+from app.auth import google, passwords
 from app.config import get_settings
 from app.deps import DbSession
 from app.models import User
@@ -32,10 +34,12 @@ def _require_google() -> None:
 
 @router.get("/config")
 async def auth_config() -> dict:
-    """How the frontend signs people in: google (a sign-in page), stub (demo users) or http."""
+    """How the frontend signs people in: google (a sign-in page), password, stub (demo users) or http.
+    `password`: the sign-in page also shows an email + password form."""
     s = get_settings()
     return {
         "provider": s.auth_provider,
+        "password": s.password_enabled,
         "login_path": f"{s.api_prefix}/auth/google/login" if s.auth_provider == "google" else None,
         "domain": s.google_allowed_domain if s.auth_provider == "google" else None,
     }
@@ -84,17 +88,48 @@ async def google_callback(
         await session.rollback()
         return RedirectResponse(_frontend(login_error="not_provisioned"))
     await session.commit()
-    s = get_settings()
     response = RedirectResponse(_frontend(data.get("next", "/")))
+    _set_session_cookie(response, google.issue_session(user.id, account))
+    return response
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    s = get_settings()
     response.set_cookie(
         s.session_cookie_name,
-        google.issue_session(user.id, account),
+        token,
         max_age=s.session_ttl_hours * 3600,
         httponly=True,
         secure=s.cookie_secure,
         samesite="lax",
         path="/",
     )
+
+
+class PasswordLogin(BaseModel):
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=200)
+
+
+@router.post("/login", status_code=status.HTTP_204_NO_CONTENT, summary="Sign in with email and password")
+async def password_login(body: PasswordLogin, session: DbSession) -> Response:
+    """Sets the session cookie. 401 for a wrong email or password (the same answer for both), 429 after
+    too many failed attempts for this email."""
+    if not get_settings().password_enabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Password sign-in is not enabled")
+    email = body.email.strip().lower()
+    if await passwords.is_locked(email):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, "Too many failed sign-ins. Try again in 15 minutes."
+        )
+    user = await session.scalar(sa.select(User).where(sa.func.lower(User.email) == email))
+    stored = user.password_hash if user is not None else None
+    if not await passwords.verify(body.password, stored) or user is None or not user.is_active:
+        await passwords.record_failure(email)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+    await passwords.clear_failures(email)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _set_session_cookie(response, passwords.issue_session(user.id, user.password_hash or ""))
     return response
 
 

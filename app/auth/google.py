@@ -160,4 +160,10 @@ def issue_session(user_id: uuid.UUID, account: GoogleAccount) -> str:
 
 def read_session(token: str) -> dict[str, Any]:
     """The claims of a session this app issued; raises jwt.PyJWTError if forged or expired."""
-    return jwt.decode(token, get_settings().jwt_secret, algorithms=[_SESSION_ALGORITHM])
+    # `sub` and `email` required: a password session (app/auth/passwords.py) has neither and is refused here.
+    return jwt.decode(
+        token,
+        get_settings().jwt_secret,
+        algorithms=[_SESSION_ALGORITHM],
+        options={"require": ["exp", "sub", "email"]},
+    )

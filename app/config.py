@@ -48,8 +48,11 @@ class Settings(BaseSettings):
     drive_sync_interval_s: int = 900
 
     # stub: dev only, the bearer token is `stub:<email>`. google: sign in with a Google Workspace account
-    # (app/auth/google.py). http: an external auth service (app/auth/client.py).
-    auth_provider: Literal["stub", "http", "google"] = "stub"
+    # (app/auth/google.py). http: an external auth service (app/auth/client.py). password: email + password
+    # only (app/auth/passwords.py).
+    auth_provider: Literal["stub", "http", "google", "password"] = "stub"
+    # true: email + password sign-in next to Google (e.g. test users without a Workspace account).
+    password_login: bool = False
     # AUTH_PROVIDER=google: an OAuth client of type "Web application" in Google Cloud.
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -62,6 +65,11 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     session_ttl_hours: int = 12
     session_cookie_name: str = "syllabus_session"
+    # true: `python -m app.cli bootstrap --if-enabled` (the migrate service, at every start) creates the Schools,
+    # the rubric and the test users of every role. With ENV=prod only together with TEST_USERS_PASSWORD.
+    seed_test_users: bool = False
+    # The password of every test user (email + password sign-in); empty: they have no password.
+    test_users_password: str = ""
     # false only for http://localhost; the cookie is HttpOnly and SameSite=Lax either way.
     cookie_secure: bool = True
     auth_service_url: str = ""
@@ -127,9 +135,18 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise ValueError(f"AUTH_PROVIDER=google needs {', '.join(missing)}")
-            if self.env == "prod" and len(self.jwt_secret) < 32:
-                raise ValueError("JWT_SECRET must be at least 32 characters in prod")
+        if self.password_enabled:
+            if self.auth_provider not in ("google", "password"):
+                raise ValueError("PASSWORD_LOGIN needs AUTH_PROVIDER=google (or use AUTH_PROVIDER=password)")
+            if not self.jwt_secret:
+                raise ValueError("password sign-in needs JWT_SECRET")
+        if self.env == "prod" and self.jwt_secret and len(self.jwt_secret) < 32:
+            raise ValueError("JWT_SECRET must be at least 32 characters in prod")
         return self
+
+    @property
+    def password_enabled(self) -> bool:
+        return self.auth_provider == "password" or self.password_login
 
 
 @lru_cache

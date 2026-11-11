@@ -20,6 +20,7 @@ uv run python scripts/demo_flow.py                # e2e: сессия → пра
 
 | Пользователь | Роль |
 |---|---|
+| `superadmin@…` | Администратор системы (после `bootstrap` / `add-test-users`) |
 | `provost@…` | Офис провоста |
 | `kok@…` | КОК |
 | `admin.digital@…` | Администратор School of Digital Technologies |
@@ -62,7 +63,75 @@ python -m app.cli list-users
 python -m app.cli disable-user leaver@narxoz.kz      # вход и запросы отклоняются, история остаётся
 ```
 
+**Сразу много людей на сервере** — `scripts/import_users.sh`: список прямо в файле (`email,role,school,program,name,title`, по строке на роль), правите и запускаете:
+
+```bash
+./scripts/import_users.sh              # вход через Google
+./scripts/import_users.sh --password   # плюс общий пароль для всех (спросит)
+# то же из файла: python -m app.cli import-users users.csv
+```
+
+Всё или ничего: если хоть одна строка с ошибкой, никто не добавится, а скрипт покажет номера строк. Повторный запуск добавляет только недостающие роли.
+
 Повторный `add-user` добавляет ещё одну роль. Имя подтягивается из Google при первом входе. Сессия — cookie `HttpOnly` на `SESSION_TTL_HOURS` часов.
+
+## Вход по email и паролю
+
+- `AUTH_PROVIDER=password`: только email + пароль (Google не нужен).
+- `AUTH_PROVIDER=google` + `PASSWORD_LOGIN=true`: на странице входа кнопка Google и форма с паролем.
+
+Обоим нужен `JWT_SECRET` (`openssl rand -hex 32`). Пароли хешируются scrypt. После 10 неудачных попыток email блокируется на 15 минут. Смена пароля завершает остальные сессии пользователя.
+
+```bash
+python -m app.cli add-user ivanov@narxoz.kz --role professor --password   # спросит пароль
+python -m app.cli set-password ivanov@narxoz.kz                           # сменить (спросит)
+python -m app.cli set-password ivanov@narxoz.kz --remove                  # только Google
+```
+
+### Тестовые пользователи всех ролей на сервере
+
+**Автоматически при запуске.** В `.env` на сервере:
+
+```bash
+SEED_TEST_USERS=true
+TEST_USERS_PASSWORD=<общий пароль, от 8 символов>   # в ENV=prod обязателен
+```
+
+После этого каждый `docker compose up -d` (сервис `migrate` после миграций выполняет `python -m app.cli bootstrap --if-enabled`) создаёт 4 школы, рубрику и тестовых пользователей. Повторный запуск ничего не дублирует, только обновляет пароль.
+
+**Вручную, одной командой:**
+
+```bash
+./scripts/bootstrap_server.sh                 # пароль из TEST_USERS_PASSWORD, иначе спросит
+./scripts/bootstrap_server.sh --allow-prod    # при ENV=prod
+# то же без скрипта: docker compose exec api python -m app.cli bootstrap --password
+```
+
+| Email (`@demo.narxoz.kz`) | Роль |
+|---|---|
+| `superadmin@` | Администратор системы: всё + экран «Admin» |
+| `provost@` | Офис провоста |
+| `kok@` | КОК |
+| `admin.{economics,humanities,law,digital}@` | Администратор школы |
+| `head.{economics,humanities,law,digital}@` | Руководитель программы школы |
+| `karimova@` | Преподаватель |
+
+У всех один пароль. Команда идемпотентна: повтор только обновит пароль. Убрать тестовых после демо: `disable-user <email>` или `set-password <email> --remove`.
+
+## Админка (роль `admin`)
+
+Роль `admin` видит и делает всё, что офис провоста (все школы, силлабусы, аналитика, Google Drive), и вдобавок управляет пользователями и справочником на экране **Admin** (API `/api/v1/admin/*`, `app/api/admin.py`):
+
+- пользователи: поиск и фильтры, создание, имя и должность, включение и отключение, задать или убрать пароль;
+- роли: добавить или снять роль с привязкой к школе (`school_admin`) или программе (`program_head`);
+- школы, программы, курсы: правка и удаление (если на них ничего не ссылается, иначе 409), смена ведущего и преподавателей курса;
+- сводка: пользователи по ролям, силлабусы по стадиям и статусу ИИ-проверки, прогоны, сессии, последние упавшие проверки.
+
+Пользователи не удаляются, только отключаются: на них ссылается история. Отключить себя или снять с себя `admin` нельзя, поэтому хотя бы один активный админ всегда остаётся. В согласовании силлабусов админ не участвует.
+
+```bash
+python -m app.cli add-user it.admin@narxoz.kz --role admin --password   # настоящий админ
+```
 
 ## Разработка без Docker для приложения
 

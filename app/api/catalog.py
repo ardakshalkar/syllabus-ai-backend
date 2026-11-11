@@ -102,8 +102,8 @@ async def _commit(session: DbSession, conflict: str) -> None:
 
 @router.post("/schools", response_model=SchoolOut, status_code=status.HTTP_201_CREATED)
 async def create_school(body: SchoolIn, principal: CurrentUser, session: DbSession):
-    if not principal.has(Role.provost, Role.kok):
-        raise forbidden("Only the Provost Office or KOK can add a School")
+    if not principal.university_wide:
+        raise forbidden("Only an administrator, the Provost Office or KOK can add a School")
     school = School(slug=body.slug, name=body.name.strip())
     session.add(school)
     await _commit(session, "A School with this slug already exists")

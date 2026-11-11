@@ -3,7 +3,11 @@
 `python -m app.cli setup-schools` creates the four Schools, each with one Program (Google Drive has no
 programs, but the Head of Program review step and role hang on one).
 
-`python -m app.cli add-test-users` adds, for trying the app as every role (refused when ENV=prod):
+`python -m app.cli bootstrap` does both (on a server: SEED_TEST_USERS=true runs it at start-up).
+
+`python -m app.cli add-test-users [--password]` adds, for trying the app as every role (with ENV=prod only
+with --allow-prod --password; with a password they sign in on the email + password form):
+  superadmin@…           System administrator: everything, plus the Admin screen (users, roles, catalog)
   provost@…              Provost Office: everything, university-wide
   kok@…                  KOK: everything, university-wide
   admin.<school>@…       School administrator of that School
@@ -17,6 +21,7 @@ from dataclasses import dataclass, field
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import passwords
 from app.config import get_settings
 from app.enums import Role
 from app.models import Course, Program, RoleAssignment, School, User
@@ -86,11 +91,22 @@ def _grant(
     report.roles[user.email].append(f"{role.value} ({scope})" if scope else role.value)
 
 
-async def add_demo_users(session: AsyncSession, *, instructor: bool = False, domain: str = DOMAIN) -> Report:
-    if get_settings().env == "prod":
-        raise RuntimeError("demo users are not created when ENV=prod")
+async def add_demo_users(
+    session: AsyncSession,
+    *,
+    instructor: bool = False,
+    domain: str = DOMAIN,
+    password: str | None = None,
+    allow_prod: bool = False,
+) -> Report:
+    """`password`: every test user gets it (password sign-in). In prod only with allow_prod and a password:
+    test users there are a deliberate choice, and without a password nobody could sign in as them anyway."""
+    if get_settings().env == "prod" and not (allow_prod and password):
+        raise RuntimeError("demo users are created with ENV=prod only with --allow-prod and --password")
     report = Report()
 
+    admin = await _user(session, f"superadmin@{domain}", "System Administrator", None, report)
+    _grant(admin, Role.admin, report)
     provost = await _user(session, f"provost@{domain}", "Provost Office", None, report)
     _grant(provost, Role.provost, report)
     kok = await _user(session, f"kok@{domain}", "KOK Secretary", None, report)
@@ -117,5 +133,10 @@ async def add_demo_users(session: AsyncSession, *, instructor: bool = False, dom
             if all(i.id != professor.id for i in course.instructors):
                 course.instructors.append(professor)
                 report.courses_taught += 1
+    if password is not None:
+        for email in report.roles:
+            user = await session.scalar(sa.select(User).where(User.email == email))
+            if user is not None:
+                user.password_hash = passwords.hash_password(password)
     await session.flush()
     return report

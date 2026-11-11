@@ -33,8 +33,9 @@ async def test_schools_and_users_for_every_role(ref, client_for):
     assert [created for _, created in first_schools] == [True] * 4
     assert [created for _, created in again_schools] == [False] * 4
     assert {name for _, _, name in SCHOOLS} <= names and programs == 4
-    # provost, kok, 4 admins, 4 heads, the professor
-    assert len(first.created) == 11 and second.created == []
+    # superadmin, provost, kok, 4 admins, 4 heads, the professor
+    assert len(first.created) == 12 and second.created == []
+    assert ("superadmin@t.test", Role.admin) in roles
     assert ("admin.law@t.test", Role.school_admin) in roles and (
         "head.law@t.test",
         Role.program_head,

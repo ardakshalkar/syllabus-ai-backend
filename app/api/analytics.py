@@ -13,7 +13,7 @@ router = APIRouter(tags=["analytics"])
 
 
 def _reviewer(principal: Principal) -> Principal:
-    if not principal.has(Role.provost, Role.kok, Role.school_admin, Role.program_head):
+    if not principal.has(Role.admin, Role.provost, Role.kok, Role.school_admin, Role.program_head):
         raise forbidden("Analytics is available to the Provost Office, KOK and School or program reviewers")
     return principal
 
