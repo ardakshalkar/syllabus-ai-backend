@@ -12,6 +12,18 @@ class Role(StrEnum):
     professor = "professor"
 
 
+class FolderStatus(StrEnum):
+    """What the School says about its own Drive folder for a semester, as distinct from what was found in it.
+
+    The claim and the count are kept apart on purpose: a School that reports `ready` while the folder holds
+    fewer syllabi than it declared is exactly the case the Provost Office needs to see.
+    """
+
+    not_started = "Not started"
+    filling = "Being filled"
+    ready = "Ready for review"
+
+
 class AiStatus(StrEnum):
     not_checked = "Not checked"
     processing = "Processing"

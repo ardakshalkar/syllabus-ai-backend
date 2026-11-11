@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from app.enums import EvaluationType, Role
+from app.enums import EvaluationType, FolderStatus, Role
 from app.schemas.common import Schema
 
 # Slugs appear in URLs and in `python -m app.cli add-user --school/--program`, so they stay url-safe.
@@ -117,13 +117,17 @@ class RubricOut(Schema):
 class FolderIn(Schema):
     path: str
     semester: str
-    drive_folder_id: str | None = None
+    drive_folder_id: str | None = Field(None, description="the folder's Drive id, or a pasted Drive link")
+    status: FolderStatus = FolderStatus.not_started
+    expected_count: int | None = Field(None, ge=0, description="syllabi the School says belong in it")
 
 
 class FolderPatch(Schema):
     path: str | None = None
     semester: str | None = None
-    drive_folder_id: str | None = None
+    drive_folder_id: str | None = Field(None, description="the folder's Drive id, or a pasted Drive link")
+    status: FolderStatus | None = None
+    expected_count: int | None = Field(None, ge=0)
 
 
 class FolderOut(Schema):
@@ -135,6 +139,33 @@ class FolderOut(Schema):
     last_synced_at: datetime | None
     files: int
     checked: int
+    status: FolderStatus
+    expected_count: int | None
+    declared_at: datetime | None
+    declared_by: str | None = Field(None, description="who last set the status")
+    missing: int | None = Field(
+        None, description="expected_count minus the syllabi found, when the School declared a count"
+    )
+
+
+class CollectionSchoolOut(Schema):
+    """One School's collection for a semester: whether it registered a Drive folder, what it says about it,
+    and what was actually found there. The Provost Office reads these side by side."""
+
+    school_id: uuid.UUID
+    school_name: str
+    folder_id: uuid.UUID | None
+    path: str | None
+    drive_folder_id: str | None
+    drive_link: str | None
+    status: FolderStatus
+    expected_count: int | None
+    found: int
+    checked: int
+    missing: int | None
+    declared_at: datetime | None
+    declared_by: str | None
+    last_synced_at: datetime | None
 
 
 class DriveStatusOut(Schema):
