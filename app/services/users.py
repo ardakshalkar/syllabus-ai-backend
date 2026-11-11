@@ -13,6 +13,7 @@ Many at once: `python -m app.cli import-users users.csv` (or scripts/import_user
 
 import csv
 import io
+import uuid
 from dataclasses import dataclass, field
 
 import sqlalchemy as sa
@@ -30,6 +31,20 @@ class UserError(ValueError):
 
 async def find_school(session: AsyncSession, ref: str) -> School:
     keys = {key: slug for key, slug, _ in SCHOOLS}
+    # Backward compatibility aliases
+    keys.update(
+        {
+            "humanities": "shspn",
+            "гш": "shspn",
+            "гуманитарная": "shspn",
+            "гуманитарная школа": "shspn",
+            "шспн": "shspn",
+            "шбнп": "shbnp",
+            "шэм": "economics-management",
+            "шпигу": "law-public-administration",
+            "шцт": "digital-technologies",
+        }
+    )
     ref = ref.strip()
     slug = keys.get(ref.lower(), ref)
     school = await session.scalar(
@@ -43,7 +58,7 @@ async def find_school(session: AsyncSession, ref: str) -> School:
         .limit(1)
     )
     if school is None:
-        raise UserError(f"no School {ref!r}: use one of {', '.join(keys)} (run setup-schools first)")
+        raise UserError(f"no School {ref!r}: use one of {', '.join(sorted(keys))} (run setup-schools first)")
     return school
 
 
@@ -54,6 +69,8 @@ async def add_user(
     *,
     name: str | None = None,
     title: str | None = None,
+    department: str | None = None,
+    user_school_id: uuid.UUID | None = None,
     school: str | None = None,
     program: str | None = None,
     password: str | None = None,
@@ -93,6 +110,12 @@ async def add_user(
     else:
         user.name = name or user.name
         user.title = title or user.title
+    if department is not None:
+        user.department = department.strip() if department else None
+    if user_school_id is not None:
+        user.school_id = user_school_id
+    elif school_id is not None and user.school_id is None:
+        user.school_id = school_id
     user.is_active = True
     if password is not None:
         user.password_hash = _hash(password)
