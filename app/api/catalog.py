@@ -9,8 +9,19 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.rbac import forbidden, manages_school
 from app.config import get_settings
 from app.deps import CurrentUser, DbSession
-from app.enums import AiStatus, Role
-from app.models import Course, Program, RubricVersion, School, Syllabus, SyllabusVersion, UploadFolder, User
+from app.enums import AiStatus, ApprovalStage, Role, SessionItemStatus, SessionStatus
+from app.models import (
+    CheckSession,
+    Course,
+    Program,
+    RubricVersion,
+    School,
+    SessionItem,
+    Syllabus,
+    SyllabusVersion,
+    UploadFolder,
+    User,
+)
 from app.models.org import course_instructors
 from app.schemas.catalog import (
     CollectionFolderOut,
@@ -325,6 +336,21 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     )
                 ).all()
             )
+        # A professor reads their School's row too, to know which folder their syllabus belongs in.
+        teaching = (
+            sa.select(course_instructors.c.course_id)
+            .where(course_instructors.c.user_id == principal.id)
+            .union(sa.select(Course.id).where(Course.lead_id == principal.id))
+        )
+        visible |= set(
+            (
+                await session.scalars(
+                    sa.select(Program.school_id)
+                    .join(Course, Course.program_id == Program.id)
+                    .where(Course.id.in_(teaching))
+                )
+            ).all()
+        )
         schools = [s for s in schools if s.id in visible]
 
     by_school: dict[uuid.UUID, list[UploadFolder]] = {}
@@ -334,16 +360,21 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
         by_school.setdefault(f.school_id, []).append(f)
 
     checked_status = Syllabus.ai_status.in_([AiStatus.checked, AiStatus.needs_revision])
+    # How far each syllabus has come: found, checked by the AI, waiting on a Head, waiting on KOK, approved.
+    counts = (
+        sa.func.count(Syllabus.id),
+        sa.func.count(Syllabus.id).filter(checked_status),
+        sa.func.count(Syllabus.id).filter(Syllabus.approval_stage == ApprovalStage.head_review),
+        sa.func.count(Syllabus.id).filter(Syllabus.approval_stage == ApprovalStage.kok_review),
+        sa.func.count(Syllabus.id).filter(Syllabus.approval_stage == ApprovalStage.approved),
+    )
+    zero = (0, 0, 0, 0, 0)
     # Per folder: the syllabi that arrived through it.
     per_folder = {
-        folder_id: (found, checked)
-        for folder_id, found, checked in (
+        row[0]: tuple(row[1:])
+        for row in (
             await session.execute(
-                sa.select(
-                    Syllabus.folder_id,
-                    sa.func.count(Syllabus.id),
-                    sa.func.count(Syllabus.id).filter(checked_status),
-                )
+                sa.select(Syllabus.folder_id, *counts)
                 .where(Syllabus.semester == semester, Syllabus.folder_id.is_not(None))
                 .group_by(Syllabus.folder_id)
             )
@@ -361,16 +392,33 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
     # Per School: every syllabus of its courses this semester, whichever way it arrived (a folder, or an
     # upload in the app), since both paths are in use.
     per_school = {
-        school_id: (found, checked)
-        for school_id, found, checked in (
+        row[0]: tuple(row[1:])
+        for row in (
+            await session.execute(
+                sa.select(Program.school_id, *counts)
+                .join(Course, Course.program_id == Program.id)
+                .join(Syllabus, sa.and_(Syllabus.course_id == Course.id, Syllabus.semester == semester))
+                .group_by(Program.school_id)
+            )
+        ).all()
+    }
+    # A check running now, whichever scope started it, reported as the share of this School it covers.
+    checking = {
+        school_id: (total, done)
+        for school_id, total, done in (
             await session.execute(
                 sa.select(
                     Program.school_id,
-                    sa.func.count(Syllabus.id),
-                    sa.func.count(Syllabus.id).filter(checked_status),
+                    sa.func.count(SessionItem.id),
+                    sa.func.count(SessionItem.id).filter(
+                        SessionItem.status.in_([SessionItemStatus.done, SessionItemStatus.failed])
+                    ),
                 )
-                .join(Course, Course.program_id == Program.id)
-                .join(Syllabus, sa.and_(Syllabus.course_id == Course.id, Syllabus.semester == semester))
+                .join(CheckSession, CheckSession.id == SessionItem.session_id)
+                .join(Syllabus, Syllabus.id == SessionItem.syllabus_id)
+                .join(Course, Course.id == Syllabus.course_id)
+                .join(Program, Program.id == Course.program_id)
+                .where(CheckSession.status == SessionStatus.running, CheckSession.semester == semester)
                 .group_by(Program.school_id)
             )
         ).all()
@@ -380,7 +428,7 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
     for school in schools:
         folders = []
         for f in by_school.get(school.id, []):
-            found, checked = per_folder.get(f.id, (0, 0))
+            found, checked, at_head, at_kok, approved = per_folder.get(f.id, zero)
             folders.append(
                 CollectionFolderOut(
                     folder_id=f.id,
@@ -392,15 +440,28 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     status=f.status,
                     found=found,
                     checked=checked,
+                    at_head=at_head,
+                    at_kok=at_kok,
+                    approved=approved,
                     declared_at=f.declared_at,
                     declared_by=f.declared_by.name if f.declared_by else None,
                     last_synced_at=synced.get(f.id),
                 )
             )
-        found, checked = per_school.get(school.id, (0, 0))
+        found, checked, at_head, at_kok, approved = per_school.get(school.id, zero)
+        checking_total, checking_done = checking.get(school.id, (0, 0))
         rows.append(
             CollectionSchoolOut(
-                school_id=school.id, school_name=school.name, folders=folders, found=found, checked=checked
+                school_id=school.id,
+                school_name=school.name,
+                folders=folders,
+                found=found,
+                checked=checked,
+                at_head=at_head,
+                at_kok=at_kok,
+                approved=approved,
+                checking_total=checking_total,
+                checking_done=checking_done,
             )
         )
     return rows

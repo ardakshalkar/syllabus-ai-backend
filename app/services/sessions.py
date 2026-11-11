@@ -9,7 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.rbac import Principal, forbidden, manages_school
 from app.db.pg import session_scope
-from app.enums import CheckKind, Role, RunStatus, SessionItemStatus, SessionScope, SessionStatus, Trigger
+from app.enums import (
+    AiStatus,
+    CheckKind,
+    Role,
+    RunStatus,
+    SessionItemStatus,
+    SessionScope,
+    SessionStatus,
+    Trigger,
+)
 from app.models import (
     AssessmentRun,
     CheckSession,
@@ -79,6 +88,7 @@ async def create(
     scheduled_at: datetime | None,
     notify_provost: bool,
     notify_school: bool,
+    only_unchecked: bool = False,
 ) -> tuple[CheckSession, list[uuid.UUID]]:
     """Returns the session and the run ids to dispatch after commit (empty when scheduled)."""
     school_id = await _scope_school(session, scope_type, scope_ref)
@@ -97,6 +107,7 @@ async def create(
         status=SessionStatus.scheduled,
         notify_provost=notify_provost,
         notify_school=notify_school,
+        only_unchecked=only_unchecked,
         created_by=principal.id,
     )
     session.add(cs)
@@ -122,6 +133,11 @@ async def _resolve_versions(session: AsyncSession, cs: CheckSession) -> list[tup
         SyllabusVersion.version == Syllabus.current_version,
         Syllabus.drive_missing_at.is_(None),  # its file left Google Drive
     )
+    if cs.only_unchecked:
+        # Checked, needing revision, or being checked right now: none of those is waiting for the AI.
+        query = query.where(
+            Syllabus.ai_status.not_in([AiStatus.checked, AiStatus.needs_revision, AiStatus.processing])
+        )
     if cs.scope_type == SessionScope.school:
         query = query.where(Program.school_id == cs.scope_ref)
     elif cs.scope_type == SessionScope.program:

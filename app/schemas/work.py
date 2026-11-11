@@ -18,6 +18,9 @@ class SessionCreate(Schema):
     scheduled_at: datetime | None = None
     notify_provost: bool = True
     notify_school: bool = False
+    only_unchecked: bool = Field(
+        default=False, description="check only syllabi the AI has not checked yet, skipping the rest"
+    )
 
 
 class SessionProgress(Schema):
@@ -44,6 +47,7 @@ class SessionOut(Schema):
     created_by_name: str | None
     notify_provost: bool
     notify_school: bool
+    only_unchecked: bool
     progress: SessionProgress
 
 

@@ -36,6 +36,8 @@ class CheckSession(UUIDPk, CreatedAt, Base):
     status: Mapped[SessionStatus] = mapped_column(str_enum(SessionStatus))
     notify_provost: Mapped[bool] = mapped_column(default=True)
     notify_school: Mapped[bool] = mapped_column(default=False)
+    # Set when the Provost Office reviews what has arrived since the last check, so nothing is checked twice.
+    only_unchecked: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     created_by: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"))
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

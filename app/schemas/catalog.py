@@ -152,6 +152,9 @@ class CollectionFolderOut(Schema):
     status: FolderStatus
     found: int
     checked: int
+    at_head: int = Field(description="its syllabi waiting on a Head of Program")
+    at_kok: int = Field(description="its syllabi waiting on KOK")
+    approved: int
     declared_at: datetime | None
     declared_by: str | None
     last_synced_at: datetime | None
@@ -168,6 +171,11 @@ class CollectionSchoolOut(Schema):
         description="syllabi of the School's courses this semester, whichever way they arrived"
     )
     checked: int
+    at_head: int
+    at_kok: int
+    approved: int
+    checking_total: int = Field(description="its syllabi in a checking session running now")
+    checking_done: int = Field(description="of those, how many the session has finished")
 
 
 class DriveStatusOut(Schema):
