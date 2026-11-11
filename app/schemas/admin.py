@@ -15,6 +15,16 @@ Password = Annotated[str, Field(min_length=MIN_LENGTH, max_length=200)]
 Title = Annotated[str, Field(max_length=120)]
 
 
+class StaffEmployeeOut(Schema):
+    full_name: str
+    email: str
+    department: str | None = None
+    school: str | None = None
+    school_id: uuid.UUID | None = None
+    already_added: bool = False
+    user_id: uuid.UUID | None = None
+
+
 class AdminRoleIn(Schema):
     """school_admin needs school_id, program_head needs program_id; the other roles take neither."""
 
@@ -37,6 +47,9 @@ class AdminUserOut(Schema):
     email: str
     name: str
     title: str | None
+    department: str | None = None
+    school_id: uuid.UUID | None = None
+    school_name: str | None = None
     is_active: bool
     has_password: bool
     # Signed in with Google at least once (the account is linked).
@@ -49,13 +62,18 @@ class AdminUserIn(Schema):
     email: Annotated[str, Field(min_length=3, max_length=254)]
     name: Name | None = None
     title: Title | None = None
+    department: str | None = None
+    school_id: uuid.UUID | None = None
     password: Password | None = None
     roles: list[AdminRoleIn] = []
 
 
 class AdminUserPatch(Schema):
+    email: Annotated[str, Field(min_length=3, max_length=254)] | None = None
     name: Name | None = None
     title: Title | None = None
+    department: str | None = None
+    school_id: uuid.UUID | None = None
     is_active: bool | None = None
 
 

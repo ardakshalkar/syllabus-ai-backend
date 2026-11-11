@@ -4,11 +4,13 @@ Creating Schools, programs and courses stays in app/api/catalog.py (an admin may
 import uuid
 from typing import Annotated
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Response, status
 
 from app.auth.rbac import Principal
 from app.deps import DbSession, require_role
 from app.enums import Role
+from app.models import School, User
 from app.schemas.admin import (
     AdminPasswordIn,
     AdminRoleIn,
@@ -19,9 +21,10 @@ from app.schemas.admin import (
     CoursePatch,
     ProgramPatch,
     SchoolPatch,
+    StaffEmployeeOut,
 )
 from app.schemas.catalog import CourseOut, ProgramOut, SchoolOut
-from app.services import admin
+from app.services import admin, staff
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 Admin = Annotated[Principal, require_role(Role.admin)]
@@ -29,6 +32,90 @@ Admin = Annotated[Principal, require_role(Role.admin)]
 
 async def _one(session: DbSession, user) -> AdminUserOut:
     return (await admin.users_out(session, [user]))[0]
+
+
+@router.get("/employees", response_model=list[StaffEmployeeOut])
+async def list_employees(
+    _: Admin,
+    session: DbSession,
+    q: str | None = None,
+    school: str | None = None,
+):
+    raw_employees = await staff.fetch_external_employees()
+    emails = [emp.email.lower() for emp in raw_employees]
+    existing: dict[str, uuid.UUID] = (
+        dict(
+            (
+                await session.execute(
+                    sa.select(sa.func.lower(User.email), User.id).where(sa.func.lower(User.email).in_(emails))
+                )
+            ).all()
+        )
+        if emails
+        else {}
+    )
+    db_schools = list(await session.scalars(sa.select(School)))
+    school_name_to_id = {s.name.lower(): s.id for s in db_schools}
+    school_slug_to_id = {s.slug.lower(): s.id for s in db_schools}
+
+    result = []
+    q_norm = q.strip().lower() if q else ""
+    school_filter = school.strip().lower() if school else ""
+
+    for emp in raw_employees:
+        emp_school = emp.school or staff.detect_school(emp.department)
+        school_id = school_name_to_id.get(emp_school.lower()) if emp_school else None
+
+        # Filter by school if requested
+        if school_filter:
+            matched_school = False
+            if emp_school and (school_filter in emp_school.lower() or emp_school.lower() in school_filter):
+                matched_school = True
+            elif emp.department and school_filter in emp.department.lower():
+                matched_school = True
+            elif school_filter in school_slug_to_id and school_id == school_slug_to_id[school_filter]:
+                matched_school = True
+            if not matched_school:
+                continue
+
+        # Filter by q search
+        if q_norm:
+            in_name = q_norm in emp.full_name.lower()
+            in_email = q_norm in emp.email.lower()
+            in_dept = bool(emp.department and q_norm in emp.department.lower())
+            in_school = bool(emp_school and q_norm in emp_school.lower())
+            if not (in_name or in_email or in_dept or in_school):
+                continue
+
+        user_id = existing.get(emp.email.lower())
+        result.append(
+            StaffEmployeeOut(
+                full_name=emp.full_name,
+                email=emp.email,
+                department=emp.department,
+                school=emp_school,
+                school_id=school_id,
+                already_added=user_id is not None,
+                user_id=user_id,
+            )
+        )
+
+    # Sort strictly by the requested schools order:
+    # 1. "Школа экономики и менеджмента"
+    # 2. "Школа цифровых технологий"
+    # 3. "Школа социальных и прикладных наук"
+    # 4. "Школа права и государственного управления"
+    # 5. "Школа базовых и междисциплинарных программ"
+    def sort_key(item: StaffEmployeeOut) -> tuple[int, str]:
+        school_idx = (
+            staff.SCHOOL_NAMES_ORDER.index(item.school)
+            if item.school and item.school in staff.SCHOOL_NAMES_ORDER
+            else len(staff.SCHOOL_NAMES_ORDER)
+        )
+        return (school_idx, item.full_name)
+
+    result.sort(key=sort_key)
+    return result
 
 
 @router.get("/stats", response_model=AdminStatsOut)

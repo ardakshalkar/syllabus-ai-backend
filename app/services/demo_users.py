@@ -31,7 +31,8 @@ DOMAIN = "demo.narxoz.kz"
 # key (used in test emails), slug, name
 SCHOOLS = [
     ("economics", "economics-management", "Школа экономики и менеджмента"),
-    ("humanities", "humanities", "Гуманитарная школа"),
+    ("shspn", "shspn", "Школа социальных и прикладных наук"),
+    ("shbnp", "shbnp", "Школа базовых и междисциплинарных программ"),
     ("law", "law-public-administration", "Школа права и государственного управления"),
     ("digital", "digital-technologies", "Школа цифровых технологий"),
 ]
@@ -117,12 +118,16 @@ async def add_demo_users(
         if school is None:  # setup-schools was not run, or this database has other Schools
             continue
         admin = await _user(session, f"admin.{key}@{domain}", f"Administrator · {name}", None, report)
+        admin.school_id = school.id
+        admin.department = name
         _grant(admin, Role.school_admin, report, school=school)
         program = await session.scalar(
             sa.select(Program).where(Program.school_id == school.id).order_by(Program.name).limit(1)
         )
         if program is not None:
             head = await _user(session, f"head.{key}@{domain}", f"Head of Program · {name}", None, report)
+            head.school_id = school.id
+            head.department = name
             _grant(head, Role.program_head, report, program=program)
 
     professor = await _user(session, f"karimova@{domain}", "M. Karimova", "Professor", report)

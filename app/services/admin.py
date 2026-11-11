@@ -73,6 +73,9 @@ def user_out(user: User, names: dict[uuid.UUID, str]) -> AdminUserOut:
         email=user.email,
         name=user.name,
         title=user.title,
+        department=user.department,
+        school_id=user.school_id,
+        school_name=names.get(user.school_id) if user.school_id else None,
         is_active=user.is_active,
         has_password=user.password_hash is not None,
         # A dev stub login links the account by its email; only Google puts its own id here.
@@ -164,11 +167,15 @@ async def create_user(session: AsyncSession, body: AdminUserIn) -> User:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"not an email: {email!r}")
     if await session.scalar(sa.select(User.id).where(sa.func.lower(User.email) == email)):
         raise _conflict("A user with this email already exists")
+    if body.school_id is not None and await session.get(School, body.school_id) is None:
+        raise _not_found("School")
     roles = [await _validated_role(session, r) for r in body.roles]
     user = User(
         email=email,
         name=(body.name or "").strip() or email,
         title=(body.title or "").strip() or None,
+        department=(body.department or "").strip() or None,
+        school_id=body.school_id,
         password_hash=_hash(body.password) if body.password else None,
         roles=_unique(roles),
     )
@@ -188,10 +195,29 @@ def _unique(roles: list[RoleAssignment]) -> list[RoleAssignment]:
 
 
 async def update_user(session: AsyncSession, actor: User, user: User, body: AdminUserPatch) -> User:
+    if "email" in body.model_fields_set and body.email is not None:
+        new_email = body.email.strip().lower()
+        if "@" not in new_email:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"not an email: {new_email!r}")
+        if new_email != user.email:
+            existing = await session.scalar(
+                sa.select(User.id).where(sa.func.lower(User.email) == new_email, User.id != user.id)
+            )
+            if existing:
+                raise _conflict("A user with this email already exists")
+            user.email = new_email
+            # Reset external_id so the new Google account links on first sign-in
+            user.external_id = None
     if body.name is not None:
         user.name = body.name.strip()
     if "title" in body.model_fields_set:
         user.title = (body.title or "").strip() or None
+    if "department" in body.model_fields_set:
+        user.department = (body.department or "").strip() or None
+    if "school_id" in body.model_fields_set:
+        if body.school_id is not None and await session.get(School, body.school_id) is None:
+            raise _not_found("School")
+        user.school_id = body.school_id
     if body.is_active is False and user.is_active:
         if user.id == actor.id:
             raise _conflict("You cannot disable your own account")

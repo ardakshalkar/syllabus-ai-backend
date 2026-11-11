@@ -85,10 +85,37 @@ async def test_users_and_roles_are_managed(ref, client_for):
     assert short.status_code == 422
 
     patched = await root.patch(
-        f"/admin/users/{uid}", json={"name": "Renamed", "title": None, "is_active": False}
+        f"/admin/users/{uid}",
+        json={
+            "name": "Renamed",
+            "title": None,
+            "department": "New Dept",
+            "school_id": digital,
+            "is_active": False,
+        },
     )
-    assert patched.json()["name"] == "Renamed" and patched.json()["is_active"] is False
+    assert (
+        patched.json()["name"] == "Renamed"
+        and patched.json()["department"] == "New Dept"
+        and patched.json()["school_id"] == digital
+        and patched.json()["is_active"] is False
+    )
     assert (await person.get("/me")).status_code == 403  # a disabled user's requests are refused
+
+
+async def test_admin_employees_endpoint(ref, client_for):
+    root = await _admin(client_for)
+    res = await root.get("/admin/employees")
+    assert res.status_code == 200
+    employees = res.json()
+    assert len(employees) > 0
+    first = employees[0]
+    assert "full_name" in first and "email" in first and "department" in first
+    assert "already_added" in first and "school" in first
+    # Verify sorting by school order
+    schools_present = [e["school"] for e in employees if e.get("school")]
+    assert schools_present[0] == "Школа экономики и менеджмента"
+    assert "Школа цифровых технологий" in schools_present
 
 
 async def test_an_admin_cannot_lock_themselves_out(ref, client_for):
