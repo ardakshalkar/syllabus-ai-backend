@@ -1,4 +1,4 @@
-"""What a School says about its semester folder: upload_folders.status / expected_count / declared_*
+"""What a School says about its semester folder: upload_folders.status / declared_*
 
 Revision ID: 0006
 Revises: 0005
@@ -31,7 +31,6 @@ def upgrade() -> None:
         "upload_folders",
         sa.Column("status", STATUS, nullable=False, server_default="Not started"),
     )
-    op.add_column("upload_folders", sa.Column("expected_count", sa.Integer(), nullable=True))
     op.add_column("upload_folders", sa.Column("declared_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column(
         "upload_folders",
@@ -42,5 +41,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("upload_folders", "declared_by_id")
     op.drop_column("upload_folders", "declared_at")
-    op.drop_column("upload_folders", "expected_count")
     op.drop_column("upload_folders", "status")

@@ -79,9 +79,9 @@ class Course(UUIDPk, Base):
 class UploadFolder(UUIDPk, CreatedAt, Base):
     """Folder a School uploads into. `drive_folder_id` is where its files land in Google Drive.
 
-    A School keeps one of these per semester: it makes its own Drive folder, shares it with colleagues and
-    with the app's service account, and registers the link here. What the School then says about the folder
-    (`status`, `expected_count`) is its own claim, and is deliberately not derived from the files found in it.
+    A School registers as many of these per semester as it likes: it makes its own Drive folders, shares them
+    with colleagues and with the app's service account, and registers each link here. What the School then
+    says about a folder (`status`) is its own claim, and is deliberately not derived from the files in it.
     """
 
     __tablename__ = "upload_folders"
@@ -91,12 +91,7 @@ class UploadFolder(UUIDPk, CreatedAt, Base):
     path: Mapped[str] = mapped_column(sa.String(300))
     semester: Mapped[str] = mapped_column(sa.String(40))
     drive_folder_id: Mapped[str | None] = mapped_column(sa.String(128))
-    status: Mapped[FolderStatus] = mapped_column(
-        str_enum(FolderStatus), default=FolderStatus.not_started
-    )
-    # How many syllabi the School says belong in this folder this semester. Without it nothing can be
-    # missing: every course is otherwise created from a file that was found, so found always equals expected.
-    expected_count: Mapped[int | None] = mapped_column(sa.Integer)
+    status: Mapped[FolderStatus] = mapped_column(str_enum(FolderStatus), default=FolderStatus.not_started)
     declared_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     declared_by_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id"))
     declared_by: Mapped[User | None] = relationship(lazy="selectin")

@@ -119,7 +119,6 @@ class FolderIn(Schema):
     semester: str
     drive_folder_id: str | None = Field(None, description="the folder's Drive id, or a pasted Drive link")
     status: FolderStatus = FolderStatus.not_started
-    expected_count: int | None = Field(None, ge=0, description="syllabi the School says belong in it")
 
 
 class FolderPatch(Schema):
@@ -127,7 +126,6 @@ class FolderPatch(Schema):
     semester: str | None = None
     drive_folder_id: str | None = Field(None, description="the folder's Drive id, or a pasted Drive link")
     status: FolderStatus | None = None
-    expected_count: int | None = Field(None, ge=0)
 
 
 class FolderOut(Schema):
@@ -140,32 +138,36 @@ class FolderOut(Schema):
     files: int
     checked: int
     status: FolderStatus
-    expected_count: int | None
     declared_at: datetime | None
     declared_by: str | None = Field(None, description="who last set the status")
-    missing: int | None = Field(
-        None, description="expected_count minus the syllabi found, when the School declared a count"
-    )
 
 
-class CollectionSchoolOut(Schema):
-    """One School's collection for a semester: whether it registered a Drive folder, what it says about it,
-    and what was actually found there. The Provost Office reads these side by side."""
+class CollectionFolderOut(Schema):
+    """One Drive folder a School registered for the semester, with what the School says about it."""
 
-    school_id: uuid.UUID
-    school_name: str
-    folder_id: uuid.UUID | None
-    path: str | None
+    folder_id: uuid.UUID
+    path: str
     drive_folder_id: str | None
     drive_link: str | None
     status: FolderStatus
-    expected_count: int | None
     found: int
     checked: int
-    missing: int | None
     declared_at: datetime | None
     declared_by: str | None
     last_synced_at: datetime | None
+
+
+class CollectionSchoolOut(Schema):
+    """One School's collection for a semester: every Drive folder it registered, what it says about each,
+    and what was actually found. A School may register as many folders as it likes, or none."""
+
+    school_id: uuid.UUID
+    school_name: str
+    folders: list[CollectionFolderOut]
+    found: int = Field(
+        description="syllabi of the School's courses this semester, whichever way they arrived"
+    )
+    checked: int
 
 
 class DriveStatusOut(Schema):

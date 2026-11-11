@@ -9,10 +9,11 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.rbac import forbidden, manages_school
 from app.config import get_settings
 from app.deps import CurrentUser, DbSession
-from app.enums import AiStatus, FolderStatus, Role
+from app.enums import AiStatus, Role
 from app.models import Course, Program, RubricVersion, School, Syllabus, SyllabusVersion, UploadFolder, User
 from app.models.org import course_instructors
 from app.schemas.catalog import (
+    CollectionFolderOut,
     CollectionSchoolOut,
     CourseIn,
     CourseOut,
@@ -27,8 +28,8 @@ from app.schemas.catalog import (
     SchoolIn,
     SchoolOut,
 )
-from app.services.sessions import ensure_can_manage
 from app.services import drive_admin
+from app.services.sessions import ensure_can_manage
 from app.storage import drive, drive_config
 
 router = APIRouter(tags=["catalog"])
@@ -202,11 +203,6 @@ def drive_folder_id_from(text: str) -> str:
     )
 
 
-def _found(folder: UploadFolder, found: int) -> int | None:
-    """How many syllabi the School still owes, when it said how many to expect."""
-    return None if folder.expected_count is None else max(folder.expected_count - found, 0)
-
-
 async def _folder_out(session: DbSession, folder: UploadFolder) -> FolderOut:
     files, checked = (
         await session.execute(
@@ -231,10 +227,8 @@ async def _folder_out(session: DbSession, folder: UploadFolder) -> FolderOut:
         files=files,
         checked=checked,
         status=folder.status,
-        expected_count=folder.expected_count,
         declared_at=folder.declared_at,
         declared_by=folder.declared_by.name if folder.declared_by else None,
-        missing=_found(folder, files),
     )
 
 
@@ -276,7 +270,6 @@ async def create_folder(school_id: uuid.UUID, body: FolderIn, principal: Current
         semester=body.semester,
         drive_folder_id=await _checked_drive_folder(body.drive_folder_id),
         status=body.status,
-        expected_count=body.expected_count,
         declared_at=datetime.now(UTC),
         declared_by_id=principal.id,
     )
@@ -297,11 +290,8 @@ async def update_folder(folder_id: uuid.UUID, body: FolderPatch, principal: Curr
     # Sending null for drive_folder_id disconnects the folder; other fields ignore null.
     if "drive_folder_id" in body.model_fields_set:
         folder.drive_folder_id = await _checked_drive_folder(body.drive_folder_id)
-    # Null clears the expected count, which is how a School withdraws a figure it should not have given.
-    if "expected_count" in body.model_fields_set:
-        folder.expected_count = body.expected_count
-    said = {"status", "expected_count"} & body.model_fields_set
-    for key, value in body.model_dump(exclude_none=True, exclude={"drive_folder_id", "expected_count"}).items():
+    said = "status" in body.model_fields_set
+    for key, value in body.model_dump(exclude_none=True, exclude={"drive_folder_id"}).items():
         setattr(folder, key, value.strip() if isinstance(value, str) else value)
     # Record who last spoke for the School, so the Provost Office can see whose claim it is reading.
     if said:
@@ -318,9 +308,9 @@ async def update_folder(folder_id: uuid.UUID, body: FolderPatch, principal: Curr
 async def collection(semester: str, principal: CurrentUser, session: DbSession):
     """Where each School stands in collecting its syllabi for a semester.
 
-    A School that has registered no folder still gets a row, because a School that has done nothing is
-    precisely what this screen exists to show; everything derived from the files alone can only ever
-    describe the Schools that already uploaded something.
+    A School registers as many Drive folders as it likes, so each row carries all of them. A School that
+    has registered none still gets a row: that is precisely what this screen exists to show, and anything
+    counted from the files alone can only describe the Schools that already uploaded something.
     """
     schools = (await session.scalars(sa.select(School).order_by(School.name))).all()
     if not principal.university_wide:
@@ -336,60 +326,81 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                 ).all()
             )
         schools = [s for s in schools if s.id in visible]
-    folders = {
-        f.school_id: f
-        for f in await session.scalars(
-            sa.select(UploadFolder).where(UploadFolder.semester == semester).order_by(UploadFolder.path)
-        )
+
+    by_school: dict[uuid.UUID, list[UploadFolder]] = {}
+    for f in await session.scalars(
+        sa.select(UploadFolder).where(UploadFolder.semester == semester).order_by(UploadFolder.path)
+    ):
+        by_school.setdefault(f.school_id, []).append(f)
+
+    checked_status = Syllabus.ai_status.in_([AiStatus.checked, AiStatus.needs_revision])
+    # Per folder: the syllabi that arrived through it.
+    per_folder = {
+        folder_id: (found, checked)
+        for folder_id, found, checked in (
+            await session.execute(
+                sa.select(
+                    Syllabus.folder_id,
+                    sa.func.count(Syllabus.id),
+                    sa.func.count(Syllabus.id).filter(checked_status),
+                )
+                .where(Syllabus.semester == semester, Syllabus.folder_id.is_not(None))
+                .group_by(Syllabus.folder_id)
+            )
+        ).all()
     }
-    found_by_school = dict(
+    synced = dict(
         (
             await session.execute(
-                sa.select(Program.school_id, sa.func.count(Syllabus.id))
+                sa.select(SyllabusVersion.folder_id, sa.func.max(SyllabusVersion.drive_synced_at))
+                .where(SyllabusVersion.folder_id.is_not(None))
+                .group_by(SyllabusVersion.folder_id)
+            )
+        ).all()
+    )
+    # Per School: every syllabus of its courses this semester, whichever way it arrived (a folder, or an
+    # upload in the app), since both paths are in use.
+    per_school = {
+        school_id: (found, checked)
+        for school_id, found, checked in (
+            await session.execute(
+                sa.select(
+                    Program.school_id,
+                    sa.func.count(Syllabus.id),
+                    sa.func.count(Syllabus.id).filter(checked_status),
+                )
                 .join(Course, Course.program_id == Program.id)
                 .join(Syllabus, sa.and_(Syllabus.course_id == Course.id, Syllabus.semester == semester))
                 .group_by(Program.school_id)
             )
         ).all()
-    )
-    checked_by_school = dict(
-        (
-            await session.execute(
-                sa.select(Program.school_id, sa.func.count(Syllabus.id))
-                .join(Course, Course.program_id == Program.id)
-                .join(Syllabus, sa.and_(Syllabus.course_id == Course.id, Syllabus.semester == semester))
-                .where(Syllabus.ai_status.in_([AiStatus.checked, AiStatus.needs_revision]))
-                .group_by(Program.school_id)
-            )
-        ).all()
-    )
+    }
+
     rows = []
     for school in schools:
-        folder = folders.get(school.id)
-        found = found_by_school.get(school.id, 0)
-        drive_id = folder.drive_folder_id if folder else None
+        folders = []
+        for f in by_school.get(school.id, []):
+            found, checked = per_folder.get(f.id, (0, 0))
+            folders.append(
+                CollectionFolderOut(
+                    folder_id=f.id,
+                    path=f.path,
+                    drive_folder_id=f.drive_folder_id,
+                    drive_link=f"https://drive.google.com/drive/folders/{f.drive_folder_id}"
+                    if f.drive_folder_id
+                    else None,
+                    status=f.status,
+                    found=found,
+                    checked=checked,
+                    declared_at=f.declared_at,
+                    declared_by=f.declared_by.name if f.declared_by else None,
+                    last_synced_at=synced.get(f.id),
+                )
+            )
+        found, checked = per_school.get(school.id, (0, 0))
         rows.append(
             CollectionSchoolOut(
-                school_id=school.id,
-                school_name=school.name,
-                folder_id=folder.id if folder else None,
-                path=folder.path if folder else None,
-                drive_folder_id=drive_id,
-                drive_link=f"https://drive.google.com/drive/folders/{drive_id}" if drive_id else None,
-                status=folder.status if folder else FolderStatus.not_started,
-                expected_count=folder.expected_count if folder else None,
-                found=found,
-                checked=checked_by_school.get(school.id, 0),
-                missing=_found(folder, found) if folder else None,
-                declared_at=folder.declared_at if folder else None,
-                declared_by=folder.declared_by.name if folder and folder.declared_by else None,
-                last_synced_at=await session.scalar(
-                    sa.select(sa.func.max(SyllabusVersion.drive_synced_at)).where(
-                        SyllabusVersion.folder_id == folder.id
-                    )
-                )
-                if folder
-                else None,
+                school_id=school.id, school_name=school.name, folders=folders, found=found, checked=checked
             )
         )
     return rows
