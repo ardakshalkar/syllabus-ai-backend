@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.enums import CheckKind, SessionItemStatus, SessionScope, SessionStatus, Trigger
 from app.schemas.common import Schema
@@ -21,6 +21,15 @@ class SessionCreate(Schema):
     only_unchecked: bool = Field(
         default=False, description="check only syllabi the AI has not checked yet, skipping the rest"
     )
+    only_checked: bool = Field(
+        default=False, description="check again only syllabi the AI has already checked, skipping the rest"
+    )
+
+    @model_validator(mode="after")
+    def _one_filter(self) -> "SessionCreate":
+        if self.only_unchecked and self.only_checked:
+            raise ValueError("only_unchecked and only_checked cannot both be set")
+        return self
 
 
 class SessionProgress(Schema):
@@ -48,6 +57,7 @@ class SessionOut(Schema):
     notify_provost: bool
     notify_school: bool
     only_unchecked: bool
+    only_checked: bool
     progress: SessionProgress
 
 

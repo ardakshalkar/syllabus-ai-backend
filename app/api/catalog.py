@@ -22,7 +22,7 @@ from app.models import (
     UploadFolder,
     User,
 )
-from app.models.org import course_instructors
+from app.models.org import RoleAssignment, course_instructors
 from app.schemas.catalog import (
     CollectionFolderOut,
     CollectionSchoolOut,
@@ -35,6 +35,7 @@ from app.schemas.catalog import (
     ProfessorOut,
     ProgramIn,
     ProgramOut,
+    ResponsibleOut,
     RubricOut,
     SchoolIn,
     SchoolOut,
@@ -402,6 +403,55 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
             )
         ).all()
     }
+    # What the AI made of each School's syllabi, beyond checked: how many have findings, how many it could not read.
+    # "Remaining" is counted exactly as a session with only_unchecked selects (app/services/sessions.py),
+    # so the number offered beside "Check remaining" is the number that check will take.
+    waiting = sa.and_(
+        Syllabus.ai_status.not_in([AiStatus.checked, AiStatus.needs_revision, AiStatus.processing]),
+        Syllabus.drive_missing_at.is_(None),
+    )
+    results = {
+        school_id: (findings, unreadable, remaining)
+        for school_id, findings, unreadable, remaining in (
+            await session.execute(
+                sa.select(
+                    Program.school_id,
+                    sa.func.count(Syllabus.id).filter(checked_status, Syllabus.issues > 0),
+                    sa.func.count(Syllabus.id).filter(Syllabus.ai_status == AiStatus.cannot_check),
+                    sa.func.count(Syllabus.id).filter(waiting),
+                )
+                .join(Course, Course.program_id == Program.id)
+                .join(Syllabus, sa.and_(Syllabus.course_id == Course.id, Syllabus.semester == semester))
+                .group_by(Program.school_id)
+            )
+        ).all()
+    }
+    # Who answers for each School: its School administrators.
+    responsible: dict[uuid.UUID, list[ResponsibleOut]] = {}
+    for school_id, name, email in (
+        await session.execute(
+            sa.select(RoleAssignment.school_id, User.name, User.email)
+            .join(User, User.id == RoleAssignment.user_id)
+            .where(RoleAssignment.role == Role.school_admin, RoleAssignment.school_id.is_not(None))
+            .where(User.is_active.is_(True))
+            .order_by(User.name)
+        )
+    ).all():
+        if school_id:
+            responsible.setdefault(school_id, []).append(ResponsibleOut(name=name, email=email))
+    running: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for school_id, session_id in (
+        await session.execute(
+            sa.select(Program.school_id, SessionItem.session_id)
+            .distinct()
+            .join(CheckSession, CheckSession.id == SessionItem.session_id)
+            .join(Syllabus, Syllabus.id == SessionItem.syllabus_id)
+            .join(Course, Course.id == Syllabus.course_id)
+            .join(Program, Program.id == Course.program_id)
+            .where(CheckSession.status == SessionStatus.running, CheckSession.semester == semester)
+        )
+    ).all():
+        running.setdefault(school_id, set()).add(session_id)
     # A check running now, whichever scope started it, reported as the share of this School it covers.
     checking = {
         school_id: (total, done)
@@ -462,6 +512,11 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                 approved=approved,
                 checking_total=checking_total,
                 checking_done=checking_done,
+                with_findings=results.get(school.id, (0, 0, 0))[0],
+                cannot_check=results.get(school.id, (0, 0, 0))[1],
+                remaining=results.get(school.id, (0, 0, 0))[2],
+                responsible=responsible.get(school.id, []),
+                checking_session_ids=sorted(running.get(school.id, set())),
             )
         )
     return rows

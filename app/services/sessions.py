@@ -89,6 +89,7 @@ async def create(
     notify_provost: bool,
     notify_school: bool,
     only_unchecked: bool = False,
+    only_checked: bool = False,
 ) -> tuple[CheckSession, list[uuid.UUID]]:
     """Returns the session and the run ids to dispatch after commit (empty when scheduled)."""
     school_id = await _scope_school(session, scope_type, scope_ref)
@@ -108,6 +109,7 @@ async def create(
         notify_provost=notify_provost,
         notify_school=notify_school,
         only_unchecked=only_unchecked,
+        only_checked=only_checked,
         created_by=principal.id,
     )
     session.add(cs)
@@ -138,6 +140,8 @@ async def _resolve_versions(session: AsyncSession, cs: CheckSession) -> list[tup
         query = query.where(
             Syllabus.ai_status.not_in([AiStatus.checked, AiStatus.needs_revision, AiStatus.processing])
         )
+    elif cs.only_checked:
+        query = query.where(Syllabus.ai_status.in_([AiStatus.checked, AiStatus.needs_revision]))
     if cs.scope_type == SessionScope.school:
         query = query.where(Program.school_id == cs.scope_ref)
     elif cs.scope_type == SessionScope.program:

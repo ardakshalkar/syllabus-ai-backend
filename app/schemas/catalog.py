@@ -160,6 +160,13 @@ class CollectionFolderOut(Schema):
     last_synced_at: datetime | None
 
 
+class ResponsibleOut(Schema):
+    """Someone who answers for a School's collection: one of its School administrators."""
+
+    name: str
+    email: str
+
+
 class CollectionSchoolOut(Schema):
     """One School's collection for a semester: every Drive folder it registered, what it says about each,
     and what was actually found. A School may register as many folders as it likes, or none."""
@@ -176,6 +183,18 @@ class CollectionSchoolOut(Schema):
     approved: int
     checking_total: int = Field(description="its syllabi in a checking session running now")
     checking_done: int = Field(description="of those, how many the session has finished")
+    with_findings: int = Field(default=0, description="checked syllabi with at least one issue")
+    cannot_check: int = Field(default=0, description="syllabi the AI could not read")
+    remaining: int = Field(
+        default=0,
+        description="syllabi a check of only the unchecked would take: not checked, not in progress",
+    )
+    responsible: list[ResponsibleOut] = Field(
+        default_factory=list, description="the School's administrators, who answer for its collection"
+    )
+    checking_session_ids: list[uuid.UUID] = Field(
+        default_factory=list, description="running sessions that cover this School, to pause from its row"
+    )
 
 
 class DriveStatusOut(Schema):
