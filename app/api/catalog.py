@@ -28,9 +28,13 @@ from app.schemas.catalog import (
     CollectionSchoolOut,
     CourseIn,
     CourseOut,
+    ExclusionIn,
+    ExclusionOut,
+    FolderContentsOut,
     FolderIn,
     FolderOut,
     FolderPatch,
+    FolderReadOut,
     IntegrationsOut,
     ProfessorOut,
     ProgramIn,
@@ -40,9 +44,10 @@ from app.schemas.catalog import (
     SchoolIn,
     SchoolOut,
 )
-from app.services import drive_admin
+from app.services import drive_admin, drive_catalog
 from app.services.sessions import ensure_can_manage
 from app.storage import drive, drive_config
+from app.storage.drive import explain_error, share_hint
 
 router = APIRouter(tags=["catalog"])
 
@@ -253,11 +258,7 @@ async def _checked_drive_folder(drive_folder_id: str | None) -> str | None:
     if not await asyncio.to_thread(drive.get_drive().folder_accessible, folder_id):
         # Much the commonest cause is a folder that was never shared, which otherwise reads as an empty one.
         account = (await drive_admin.status()).get("client_email")
-        share_with = f" Share it with {account}." if account else ""
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"This Drive folder cannot be opened.{share_with}",
-        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, share_hint(account))
     return folder_id
 
 
@@ -291,6 +292,68 @@ async def create_folder(school_id: uuid.UUID, body: FolderIn, principal: Current
     except sa.exc.IntegrityError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "This folder already exists") from exc
     return await _folder_out(session, folder)
+
+
+async def _visible_folder(session, principal, folder_id: uuid.UUID) -> UploadFolder:
+    """A folder of a School this person answers for or reads: the university-wide roles, its School's
+    administrators, and the Heads of its programs."""
+    folder = await session.get(UploadFolder, folder_id)
+    if folder is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Folder not found")
+    if principal.university_wide or folder.school_id in principal.school_ids:
+        return folder
+    if principal.program_ids and folder.school_id in set(
+        (
+            await session.scalars(sa.select(Program.school_id).where(Program.id.in_(principal.program_ids)))
+        ).all()
+    ):
+        return folder
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Folder not found")
+
+
+@router.get("/folders/{folder_id}/contents", response_model=FolderContentsOut)
+async def folder_contents(folder_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+    """What is inside the folder in Drive right now: course folders, their files, and which the app has read."""
+    folder = await _visible_folder(session, principal, folder_id)
+    try:
+        return await drive_catalog.folder_contents(session, folder)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except Exception as exc:
+        account = (await drive_admin.status()).get("client_email")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, explain_error(exc, account)) from exc
+
+
+@router.post("/folders/{folder_id}/read", response_model=FolderReadOut)
+async def read_folder(folder_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+    """Read this one folder from Drive now and map its syllabi into the app: a course per syllabus file.
+    The outcome, error included, is also kept on the folder for Syllabus collection."""
+    folder = await _visible_folder(session, principal, folder_id)
+    ensure_can_manage(principal, folder.school_id)
+    report = await drive_catalog.sync_folder(folder.id)
+    return FolderReadOut(
+        folder_id=folder.id,
+        disciplines=report.disciplines,
+        files=report.files,
+        added=report.added,
+        updated=report.updated,
+        unchanged=report.unchanged,
+        missing=report.missing,
+        error=report.error,
+    )
+
+
+@router.put("/folders/{folder_id}/exclusions", response_model=ExclusionOut)
+async def set_exclusion(folder_id: uuid.UUID, body: ExclusionIn, principal: CurrentUser, session: DbSession):
+    """Exclude files and course folders from being read in, or include them again, in one go. Who manages
+    the School does."""
+    folder = await _visible_folder(session, principal, folder_id)
+    ensure_can_manage(principal, folder.school_id)
+    ids = list(folder.excluded_drive_ids or [])
+    for item, excluded in [(i, True) for i in body.exclude] + [(i, False) for i in body.include]:
+        ids = await drive_catalog.set_excluded(session, folder, item.drive_id, item.name, excluded)
+    await session.commit()
+    return ExclusionOut(excluded_drive_ids=ids)
 
 
 @router.patch("/folders/{folder_id}", response_model=FolderOut)
@@ -496,6 +559,8 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     declared_at=f.declared_at,
                     declared_by=f.declared_by.name if f.declared_by else None,
                     last_synced_at=synced.get(f.id),
+                    read_at=f.read_at,
+                    read_error=f.read_error,
                 )
             )
         found, checked, at_head, at_kok, approved = per_school.get(school.id, zero)

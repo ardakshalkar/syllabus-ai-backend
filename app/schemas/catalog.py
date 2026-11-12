@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from app.enums import EvaluationType, FolderStatus, Role
+from app.enums import AiStatus, EvaluationType, FolderStatus, Role
 from app.schemas.common import Schema
 
 # Slugs appear in URLs and in `python -m app.cli add-user --school/--program`, so they stay url-safe.
@@ -158,6 +158,10 @@ class CollectionFolderOut(Schema):
     declared_at: datetime | None
     declared_by: str | None
     last_synced_at: datetime | None
+    read_at: datetime | None = Field(
+        default=None, description="when the app last tried to read it from Drive"
+    )
+    read_error: str | None = Field(default=None, description="why that read failed; None when it was read")
 
 
 class ResponsibleOut(Schema):
@@ -165,6 +169,66 @@ class ResponsibleOut(Schema):
 
     name: str
     email: str
+
+
+class FolderFileOut(Schema):
+    """A syllabus file in a course folder, and the syllabus the app keeps for it once it has read it."""
+
+    drive_id: str
+    name: str
+    path: str
+    drive_link: str | None
+    modified_at: datetime | None
+    excluded: bool = Field(description="the School excluded it: it is not read in")
+    syllabus_id: uuid.UUID | None = Field(description="None: the app has not read this file yet")
+    ai_status: AiStatus | None
+    issues: int | None
+
+
+class CourseFolderOut(Schema):
+    name: str
+    drive_id: str | None
+    excluded: bool = Field(description="the School excluded the whole course folder: none of it is read in")
+    files: list[FolderFileOut] = Field(description="empty: nobody has put a syllabus in this course folder")
+
+
+class FolderContentsOut(Schema):
+    """What is inside a School's Drive folder right now, read live from Drive."""
+
+    folder_id: uuid.UUID
+    courses: list[CourseFolderOut]
+    skipped: list[dict[str, str]] = Field(description="files the app does not read, with the reason")
+
+
+class DriveItemIn(Schema):
+    """A file or course folder inside a School folder."""
+
+    drive_id: str
+    name: str | None = Field(default=None, description="a course folder's name, to hide what it brought in")
+
+
+class ExclusionIn(Schema):
+    """What the School changed in one go: items to stop reading in, and items to read in again."""
+
+    exclude: list[DriveItemIn] = Field(default_factory=list)
+    include: list[DriveItemIn] = Field(default_factory=list)
+
+
+class ExclusionOut(Schema):
+    excluded_drive_ids: list[str]
+
+
+class FolderReadOut(Schema):
+    """The outcome of reading one School folder into the app."""
+
+    folder_id: uuid.UUID
+    disciplines: int = Field(description="course folders found")
+    files: int = Field(description="syllabus files found")
+    added: int
+    updated: int
+    unchanged: int
+    missing: int = Field(description="files that left the folder since the last read")
+    error: str | None
 
 
 class CollectionSchoolOut(Schema):

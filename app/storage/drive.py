@@ -179,8 +179,19 @@ def load_credentials(path: Path, *, read_only: bool, impersonate: str = ""):
     return credentials.Credentials.from_authorized_user_info(info, scopes=scopes)
 
 
-def explain_error(exc: Exception) -> str:
-    """A Drive failure in words someone can act on; stored on the version and shown on the Drive screen."""
+def share_hint(account: str | None) -> str:
+    """What to do about a folder the app cannot open: almost always, it was never shared with the app."""
+    whom = account or "the app's Google service account"
+    return (
+        f"The app can't open this Drive folder. Share it with {whom} (Viewer is enough), "
+        "or check that the link is right."
+    )
+
+
+def explain_error(exc: Exception, account: str | None = None) -> str:
+    """A Drive failure in words someone can act on; stored on the version and shown on the Drive screen.
+
+    `account` is the email the app reads Drive as; given, a folder that was never shared names it."""
     from googleapiclient.errors import HttpError
 
     if not isinstance(exc, HttpError):
@@ -200,7 +211,7 @@ def explain_error(exc: Exception) -> str:
     if reason == "accessNotConfigured" or "has not been used in project" in str(exc):
         return "The Google Drive API is not enabled in the service account's Google Cloud project"
     if status == 404:
-        return "Drive folder not found: share it with the service account's email, or check the folder id"
+        return share_hint(account)
     if status == 403 and reason in ("insufficientFilePermissions", "forbidden"):
         return "No permission to add files to this Drive folder: give the account Editor or Content manager"
     if status == 401 or "unauthorized_client" in str(exc):
@@ -365,6 +376,28 @@ class GoogleDrive:
         for i in range(0, len(folder_ids), 40):
             parents = " or ".join(f"'{self._checked(f)}' in parents" for f in folder_ids[i : i + 40])
             entries += self._list(f"({parents}) and trashed = false")
+        # A query over several parents leaves out files the account reaches only through a shared link (the
+        # School shared its folder by link, not with the account), while asking one folder at a time finds
+        # them. So every folder that came back empty is asked on its own; empty ones really are empty.
+        # Asked side by side, each worker with its own client: the Drive client is not thread-safe.
+        seen = {e.parent_id for e in entries}
+        alone = [f for f in folder_ids if f not in seen]
+        if alone:
+            import threading
+            from concurrent.futures import ThreadPoolExecutor
+
+            # One client per worker thread, reused for every folder that thread asks about: building a client
+            # signs in to Google, which costs more than the listing itself.
+            local = threading.local()
+
+            def listed(folder_id: str) -> list[DriveEntry]:
+                if not hasattr(local, "client"):
+                    local.client = GoogleDrive()
+                return local.client.list_folder(folder_id)
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                for found in pool.map(listed, alone):
+                    entries += found
         return entries
 
     def file_info(self, file_id: str) -> DriveEntry:
