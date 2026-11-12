@@ -196,6 +196,7 @@ class FolderContentsOut(Schema):
     """What is inside a School's Drive folder right now, read live from Drive."""
 
     folder_id: uuid.UUID
+    listed_at: datetime = Field(description="when this listing was taken from Drive")
     courses: list[CourseFolderOut]
     skipped: list[dict[str, str]] = Field(description="files the app does not read, with the reason")
 

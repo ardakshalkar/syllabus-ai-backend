@@ -100,36 +100,99 @@ class FoundFile:
     discipline: str
     path: str
     entry: DriveEntry
+    # Drive id of the course folder it sits under, so excluding that folder excludes it.
+    course_id: str = ""
 
     @property
     def course_name(self) -> str:
         return nfc(f"{self.discipline} · {Path(self.entry.name).stem.strip()}")[:200]
 
 
-EXCLUDED = "excluded by the School"
+# A listing younger than this is reused by a read that asks for it ("Choose files" → "Save and read in"),
+# instead of listing the whole folder from Drive a second time.
+LISTING_REUSE_S = 300
 
 
-def walk(
-    client: DriveClient, root_id: str, excluded: frozenset[str] = frozenset()
-) -> tuple[list[FoundFile], list[dict[str, str]], int]:
-    """Blocking. Every syllabus file below the discipline folders of `root_id`, what was skipped and why, and
-    the number of discipline folders. Each level of subfolders costs one batched request. `excluded` holds
-    Drive ids of files and folders the School excluded: they and everything under them are skipped."""
+@dataclass
+class Listing:
+    """Everything in a School folder as Drive showed it, before the School's exclusions are applied: the
+    course folders directly in it (empty ones included), every syllabus file below them, and what was
+    skipped. Kept on the folder as JSON, so it can be shown and read again without asking Drive."""
+
+    courses: list[tuple[str, str]]  # (Drive id, name)
+    found: list[FoundFile]
+    skipped: list[dict[str, str]]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "courses": [list(c) for c in self.courses],
+            "skipped": self.skipped,
+            "found": [
+                {
+                    "discipline": f.discipline,
+                    "path": f.path,
+                    "course_id": f.course_id,
+                    "id": f.entry.id,
+                    "name": f.entry.name,
+                    "content_type": f.entry.content_type,
+                    "version": f.entry.version,
+                    "modified_at": f.entry.modified_at.isoformat() if f.entry.modified_at else None,
+                    "size": f.entry.size,
+                }
+                for f in self.found
+            ],
+        }
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "Listing":
+        return cls(
+            courses=[(c[0], c[1]) for c in data.get("courses", [])],
+            skipped=list(data.get("skipped", [])),
+            found=[
+                FoundFile(
+                    f["discipline"],
+                    f["path"],
+                    DriveEntry(
+                        f["id"],
+                        f["name"],
+                        is_folder=False,
+                        content_type=f.get("content_type"),
+                        version=f.get("version"),
+                        modified_at=datetime.fromisoformat(f["modified_at"])
+                        if f.get("modified_at")
+                        else None,
+                        size=f.get("size"),
+                    ),
+                    f.get("course_id", ""),
+                )
+                for f in data.get("found", [])
+            ],
+        )
+
+    def taken(self, excluded: frozenset[str]) -> list[FoundFile]:
+        """The files a read takes: everything but what the School excluded, file by file or a course folder."""
+        return [f for f in self.found if f.entry.id not in excluded and f.course_id not in excluded]
+
+
+def list_folder_tree(client: DriveClient, root_id: str) -> Listing:
+    """Blocking. Every syllabus file below the course folders of `root_id`, what was skipped and why. Each
+    level of subfolders costs one batched request (more for a folder shared only by link, see list_children)."""
     found: list[FoundFile] = []
     skipped: list[dict[str, str]] = []
+    courses: list[tuple[str, str]] = []
     discipline: dict[str, str] = {}
+    course_of: dict[str, str] = {}
     path: dict[str, str] = {}
     for entry in client.list_folder(root_id):
         name = nfc(entry.name.strip())
-        if entry.is_folder and entry.id in excluded:
-            skipped.append({"path": f"{name}/", "reason": EXCLUDED, "id": entry.id, "discipline": name})
-        elif entry.is_folder and REFERENCE_FOLDER.search(entry.name):
+        if entry.is_folder and REFERENCE_FOLDER.search(entry.name):
             skipped.append({"path": f"{name}/", "reason": "study plans or passports, not syllabi"})
         elif entry.is_folder:
             discipline[entry.id] = path[entry.id] = name
+            course_of[entry.id] = entry.id
+            courses.append((entry.id, name))
         elif not entry.app_version_id:
             skipped.append({"path": entry.name, "reason": "not inside a discipline folder"})
-    count = len(discipline)
     level = list(discipline)
     while level:
         next_level = []
@@ -138,108 +201,91 @@ def walk(
             if parent not in discipline:
                 continue
             child_path = f"{path[parent]}/{child.name}"
-            if child.id in excluded:
-                skipped.append(
-                    {
-                        "path": child_path + ("/" if child.is_folder else ""),
-                        "reason": EXCLUDED,
-                        "id": child.id,
-                        "discipline": discipline[parent],
-                        "name": child.name,
-                    }
-                )
-            elif child.is_folder:
+            if child.is_folder:
                 discipline[child.id], path[child.id] = discipline[parent], child_path
+                course_of[child.id] = course_of[parent]
                 next_level.append(child.id)
             elif child.app_version_id:
                 continue  # a version this app copied into Drive: already catalogued as that version
             elif child.content_type:
-                found.append(FoundFile(discipline[parent], child_path, child))
+                found.append(FoundFile(discipline[parent], child_path, child, course_of[parent]))
             else:
                 skipped.append({"path": child_path, "reason": "not a .docx, .pdf or Google Doc"})
         level = next_level
-    return found, skipped, count
+    return Listing(sorted(courses, key=lambda c: c[1]), found, skipped)
 
 
-def tree(
-    client: DriveClient, root_id: str, excluded: frozenset[str] = frozenset()
-) -> tuple[list[tuple[str, str]], list[FoundFile], list[dict[str, str]]]:
-    """Blocking. The course folders directly in `root_id` as (id, name), empty and excluded ones included,
-    every syllabus file below them, and what was skipped. `walk` alone cannot tell an empty course folder
-    from no folder at all."""
-    found, skipped, _ = walk(client, root_id, excluded)
-    folders = sorted(
-        {
-            (e.id, nfc(e.name.strip()))
-            for e in client.list_folder(root_id)
-            if e.is_folder and not REFERENCE_FOLDER.search(e.name)
-        },
-        key=lambda f: f[1],
-    )
-    return folders, found, skipped
-
-
-async def folder_contents(session: AsyncSession, folder: UploadFolder) -> dict[str, Any]:
-    """What is inside a School folder, read live from Drive: each course folder with its files, and for each
-    file the syllabus the app keeps for it, if it has read it. What the School excluded is listed too,
-    marked, so it can be included again. Nothing is stored."""
-    if not folder.drive_folder_id:
-        raise ValueError("No Google Drive folder is set for this School and semester")
+async def folder_listing(folder_id: uuid.UUID, *, max_age_s: float | None) -> tuple[Listing, datetime]:
+    """The folder's listing and when it was taken: the saved one if it is no older than `max_age_s` (None:
+    any age), else a new one from Drive, which is then saved."""
+    async with session_scope() as session:
+        folder = await session.get(UploadFolder, folder_id)
+        if folder is None:
+            raise LookupError("folder not found")
+        if not folder.drive_folder_id:
+            raise ValueError("No Google Drive folder is set for this School and semester")
+        root, saved, listed_at = folder.drive_folder_id, folder.listing, folder.listed_at
+    now = datetime.now(UTC)
+    if saved and listed_at and (max_age_s is None or (now - listed_at).total_seconds() <= max_age_s):
+        return Listing.from_json(saved), listed_at
     await drive_config.refresh()
+    listing = await asyncio.to_thread(list_folder_tree, get_drive(), root)
+    async with session_scope() as session:
+        folder = await session.get(UploadFolder, folder_id)
+        if folder is not None:
+            folder.listing, folder.listed_at = listing.to_json(), now
+    return listing, now
+
+
+async def folder_contents(
+    session: AsyncSession, folder: UploadFolder, *, refresh: bool = False
+) -> dict[str, Any]:
+    """What is inside a School folder: each course folder with its files, each file with the syllabus the app
+    keeps for it if it has read it, and what the School excluded, marked. From the saved listing unless
+    `refresh` (or none was saved yet); what the app made of each file is always current."""
+    listing, listed_at = await folder_listing(folder.id, max_age_s=0 if refresh else None)
     excluded = frozenset(folder.excluded_drive_ids or [])
-    folders, found, skipped = await asyncio.to_thread(tree, get_drive(), folder.drive_folder_id, excluded)
-    ids = [f.entry.id for f in found]
+    ids = [f.entry.id for f in listing.found]
     known: dict[str, Syllabus] = {}
     if ids:
         rows = await session.execute(
             sa.select(SyllabusVersion.drive_file_id, Syllabus)
             .join(Syllabus, Syllabus.id == SyllabusVersion.syllabus_id)
-            .where(SyllabusVersion.drive_file_id.in_(ids), Syllabus.semester == folder.semester)
+            .where(
+                SyllabusVersion.drive_file_id.in_(ids),
+                Syllabus.semester == folder.semester,
+                Syllabus.drive_missing_at.is_(None),
+            )
         )
         known = {file_id: syllabus for file_id, syllabus in rows.all() if file_id}
     courses: dict[str, dict[str, Any]] = {
-        name: {"name": name, "drive_id": fid, "excluded": fid in excluded, "files": []}
-        for fid, name in folders
+        cid: {"name": name, "drive_id": cid, "excluded": cid in excluded, "files": []}
+        for cid, name in listing.courses
     }
-
-    def course(name: str) -> dict[str, Any]:
-        return courses.setdefault(name, {"name": name, "drive_id": None, "excluded": False, "files": []})
-
-    for f in found:
+    for f in listing.found:
         s = known.get(f.entry.id)
-        course(f.discipline)["files"].append(
+        course = courses.setdefault(
+            f.course_id or f.discipline,
+            {"name": f.discipline, "drive_id": None, "excluded": False, "files": []},
+        )
+        course["files"].append(
             {
                 "drive_id": f.entry.id,
                 "name": f.entry.name,
                 "path": f.path,
                 "drive_link": drive_link(f.entry.id),
                 "modified_at": f.entry.modified_at,
-                "excluded": False,
+                "excluded": f.entry.id in excluded or f.course_id in excluded,
                 "syllabus_id": s.id if s else None,
                 "ai_status": s.ai_status if s else None,
                 "issues": s.issues if s else None,
             }
         )
-    for item in skipped:
-        # An excluded file inside a course folder that is itself read: listed in its folder, marked.
-        if item.get("reason") == EXCLUDED and item.get("name") and item.get("discipline") in courses:
-            course(item["discipline"])["files"].append(
-                {
-                    "drive_id": item["id"],
-                    "name": item["name"],
-                    "path": item["path"],
-                    "drive_link": drive_link(item["id"]),
-                    "modified_at": None,
-                    "excluded": True,
-                    "syllabus_id": None,
-                    "ai_status": None,
-                    "issues": None,
-                }
-            )
     return {
         "folder_id": folder.id,
+        "listed_at": listed_at,
         "courses": sorted(courses.values(), key=lambda c: c["name"]),
-        "skipped": [s for s in skipped if s.get("reason") != EXCLUDED],
+        "skipped": listing.skipped,
     }
 
 
@@ -393,8 +439,10 @@ async def _apply(
         report.missing += 1
 
 
-async def sync_folder(folder_id: uuid.UUID) -> SyncReport:
-    """Bring the catalog of one School folder up to date with Drive. Errors are reported, not raised."""
+async def sync_folder(folder_id: uuid.UUID, *, reuse_listing_s: float = 0) -> SyncReport:
+    """Bring the catalog of one School folder up to date with Drive. Errors are reported, not raised.
+
+    `reuse_listing_s`: a saved listing at most this old is used instead of listing Drive again."""
     await drive_config.refresh()
     async with session_scope() as session:
         folder = await session.get(UploadFolder, folder_id)
@@ -414,10 +462,11 @@ async def sync_folder(folder_id: uuid.UUID) -> SyncReport:
         report.error = "This School has no Program (run `python -m app.cli setup-schools`)"
     else:
         try:
-            found, skipped, disciplines = await asyncio.to_thread(
-                walk, get_drive(), root, frozenset(excluded)
-            )
-            report.disciplines, report.files, report.skipped = disciplines, len(found), skipped
+            listing, _ = await folder_listing(folder_id, max_age_s=reuse_listing_s)
+            out = frozenset(excluded)
+            found = listing.taken(out)
+            report.disciplines = sum(1 for cid, _ in listing.courses if cid not in out)
+            report.files, report.skipped = len(found), listing.skipped
             async with session_scope() as session:
                 folder = await session.get(UploadFolder, folder_id)
                 assert folder is not None

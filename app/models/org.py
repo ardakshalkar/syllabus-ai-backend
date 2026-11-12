@@ -105,3 +105,7 @@ class UploadFolder(UUIDPk, CreatedAt, Base):
     read_error: Mapped[str | None] = mapped_column(sa.Text)
     # Files and course folders inside it that the School excluded: never read in (Drive ids).
     excluded_drive_ids: Mapped[list[str]] = mapped_column(sa.JSON, default=list, server_default="[]")
+    # The last listing of the folder from Drive (drive_catalog.Listing), whatever was excluded, and when it was
+    # taken: "See inside" and "Choose files" open from it, and a read just after reuses it.
+    listing: Mapped[dict | None] = mapped_column(sa.JSON)
+    listed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

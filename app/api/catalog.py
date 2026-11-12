@@ -312,11 +312,14 @@ async def _visible_folder(session, principal, folder_id: uuid.UUID) -> UploadFol
 
 
 @router.get("/folders/{folder_id}/contents", response_model=FolderContentsOut)
-async def folder_contents(folder_id: uuid.UUID, principal: CurrentUser, session: DbSession):
-    """What is inside the folder in Drive right now: course folders, their files, and which the app has read."""
+async def folder_contents(
+    folder_id: uuid.UUID, principal: CurrentUser, session: DbSession, refresh: bool = False
+):
+    """What is inside the folder: course folders, their files, and which the app has read. From the listing
+    saved at the last look into Drive; `refresh=true` lists Drive again."""
     folder = await _visible_folder(session, principal, folder_id)
     try:
-        return await drive_catalog.folder_contents(session, folder)
+        return await drive_catalog.folder_contents(session, folder, refresh=refresh)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     except Exception as exc:
@@ -325,12 +328,15 @@ async def folder_contents(folder_id: uuid.UUID, principal: CurrentUser, session:
 
 
 @router.post("/folders/{folder_id}/read", response_model=FolderReadOut)
-async def read_folder(folder_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+async def read_folder(folder_id: uuid.UUID, principal: CurrentUser, session: DbSession, reuse: bool = False):
     """Read this one folder from Drive now and map its syllabi into the app: a course per syllabus file.
     The outcome, error included, is also kept on the folder for Syllabus collection."""
     folder = await _visible_folder(session, principal, folder_id)
     ensure_can_manage(principal, folder.school_id)
-    report = await drive_catalog.sync_folder(folder.id)
+    # reuse=true: a listing taken in the last few minutes (by "Choose files") is used instead of a new one.
+    report = await drive_catalog.sync_folder(
+        folder.id, reuse_listing_s=drive_catalog.LISTING_REUSE_S if reuse else 0
+    )
     return FolderReadOut(
         folder_id=folder.id,
         disciplines=report.disciplines,
