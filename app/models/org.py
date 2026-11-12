@@ -21,12 +21,17 @@ class User(UUIDPk, CreatedAt, Base):
     email: Mapped[str] = mapped_column(sa.String(254), unique=True)
     name: Mapped[str] = mapped_column(sa.String(200))
     title: Mapped[str | None] = mapped_column(sa.String(120))
+    department: Mapped[str | None] = mapped_column(sa.String(200))
+    school_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("schools.id", ondelete="SET NULL"), index=True
+    )
     external_id: Mapped[str | None] = mapped_column(sa.String(255), unique=True)
     # scrypt hash (app/auth/passwords.py); None: this user cannot sign in with a password.
     password_hash: Mapped[str | None] = mapped_column(sa.String(255))
     is_active: Mapped[bool] = mapped_column(default=True)
 
     roles: Mapped[list["RoleAssignment"]] = relationship(back_populates="user", lazy="selectin")
+    school: Mapped["School | None"] = relationship(lazy="selectin")
 
 
 class RoleAssignment(UUIDPk, Base):

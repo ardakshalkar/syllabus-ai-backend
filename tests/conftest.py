@@ -40,6 +40,7 @@ def containers(tmp_path_factory):
             SECRETS_ROOT=str(tmp_path_factory.mktemp("secrets")),
             GOOGLE_IMPERSONATE_USER="",
             DRIVE_DEFAULT_FOLDER_ID="",
+            PASSWORD_LOGIN="false",
             # Pinned so a developer .env (e.g. switched to real data) cannot change test behaviour.
             DRIVE_READ_ONLY="false",
         )
