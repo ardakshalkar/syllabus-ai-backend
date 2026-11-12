@@ -155,12 +155,11 @@ async def test_analytics(ref, client_for):
 
     overview = {r["school_name"]: r for r in (await provost.get("/overview", params=params)).json()}
     digital = overview["School of Digital Technologies"]
-    assert (digital["expected"], digital["found"], digital["checked"], digital["needs_revision"]) == (
-        3,
-        2,
-        2,
-        1,
-    )
+    assert (digital["found"], digital["checked"], digital["needs_revision"]) == (2, 2, 1)
+    assert "expected" not in digital
+    # Every School is listed, including one with no course yet (its Drive folder is still empty).
+    schools = (await provost.get("/schools")).json()
+    assert {school["name"] for school in schools} <= set(overview)
 
     heatmap = (await provost.get("/analytics/heatmap", params=params)).json()
     assert len(heatmap["principles"]) == 9

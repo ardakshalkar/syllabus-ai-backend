@@ -171,7 +171,6 @@ class GenerateOut(Schema):
 class OverviewSchool(Schema):
     school_id: uuid.UUID
     school_name: str
-    expected: int
     found: int
     checked: int
     needs_revision: int
