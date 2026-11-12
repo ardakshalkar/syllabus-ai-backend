@@ -11,6 +11,7 @@ from app.api import (
     me,
     notifications,
     precheck,
+    semesters,
     sessions,
     syllabi,
     wizard,
@@ -31,5 +32,6 @@ for module in (
     sessions,
     analytics,
     notifications,
+    semesters,
 ):
     api_router.include_router(module.router)
