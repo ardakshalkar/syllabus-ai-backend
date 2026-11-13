@@ -1,9 +1,10 @@
 import uuid
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.enums import Role
+from app.enums import FolderStatus, Role
 from app.models.base import Base, CreatedAt, UUIDPk, str_enum
 
 course_instructors = sa.Table(
@@ -20,10 +21,17 @@ class User(UUIDPk, CreatedAt, Base):
     email: Mapped[str] = mapped_column(sa.String(254), unique=True)
     name: Mapped[str] = mapped_column(sa.String(200))
     title: Mapped[str | None] = mapped_column(sa.String(120))
-    google_sub: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
+    department: Mapped[str | None] = mapped_column(sa.String(200))
+    school_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("schools.id", ondelete="SET NULL"), index=True
+    )
+    external_id: Mapped[str | None] = mapped_column(sa.String(255), unique=True)
+    # scrypt hash (app/auth/passwords.py); None: this user cannot sign in with a password.
+    password_hash: Mapped[str | None] = mapped_column(sa.String(255))
     is_active: Mapped[bool] = mapped_column(default=True)
 
     roles: Mapped[list["RoleAssignment"]] = relationship(back_populates="user", lazy="selectin")
+    school: Mapped["School | None"] = relationship(lazy="selectin")
 
 
 class RoleAssignment(UUIDPk, Base):
@@ -65,13 +73,21 @@ class Course(UUIDPk, Base):
     name: Mapped[str] = mapped_column(sa.String(200))
     program_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("programs.id"), index=True)
     credits: Mapped[int]
-    lead_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"), index=True)
+    # None for a course read from Google Drive: the School's administrators act for it.
+    lead_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id"), index=True)
+    # The Drive folder the syllabus file sits in (a course read from Drive); used to group and filter.
+    discipline: Mapped[str | None] = mapped_column(sa.String(200))
 
     instructors: Mapped[list[User]] = relationship(secondary=course_instructors, lazy="selectin")
 
 
 class UploadFolder(UUIDPk, CreatedAt, Base):
-    """Logical folder a School uploads into; replaces the prototype's Google Drive folder."""
+    """Folder a School uploads into. `drive_folder_id` is where its files land in Google Drive.
+
+    A School registers as many of these per semester as it likes: it makes its own Drive folders, shares them
+    with colleagues and with the app's service account, and registers each link here. What the School then
+    says about a folder (`status`) is its own claim, and is deliberately not derived from the files in it.
+    """
 
     __tablename__ = "upload_folders"
     __table_args__ = (sa.UniqueConstraint("school_id", "path"),)
@@ -79,3 +95,17 @@ class UploadFolder(UUIDPk, CreatedAt, Base):
     school_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("schools.id"), index=True)
     path: Mapped[str] = mapped_column(sa.String(300))
     semester: Mapped[str] = mapped_column(sa.String(40))
+    drive_folder_id: Mapped[str | None] = mapped_column(sa.String(128))
+    status: Mapped[FolderStatus] = mapped_column(str_enum(FolderStatus), default=FolderStatus.not_started)
+    declared_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    declared_by_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id"))
+    declared_by: Mapped[User | None] = relationship(lazy="selectin")
+    # The app's last attempt to read the folder from Drive, and why it failed (None: it was read).
+    read_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    read_error: Mapped[str | None] = mapped_column(sa.Text)
+    # Files and course folders inside it that the School excluded: never read in (Drive ids).
+    excluded_drive_ids: Mapped[list[str]] = mapped_column(sa.JSON, default=list, server_default="[]")
+    # The last listing of the folder from Drive (drive_catalog.Listing), whatever was excluded, and when it was
+    # taken: "See inside" and "Choose files" open from it, and a read just after reuses it.
+    listing: Mapped[dict | None] = mapped_column(sa.JSON)
+    listed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

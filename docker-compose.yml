@@ -4,13 +4,24 @@ x-app: &app
   build: .
   env_file: .env
   environment:
-    DATABASE_URL: postgresql+asyncpg://syllabus:syllabus@postgres:5432/syllabus
+    # DB_NAME in .env picks the databases: `syllabus` (demo, the default) or e.g. `syllabus_real` for imported
+    # real data. Both live side by side; the migrate service creates a missing one.
+    DATABASE_URL: postgresql+asyncpg://syllabus:syllabus@postgres:5432/${DB_NAME:-syllabus}
     MONGO_URL: mongodb://mongo:27017
+    MONGO_DB: ${DB_NAME:-syllabus}
     REDIS_URL: redis://redis:6379/0
     FILES_ROOT: /data/files
     TMP_ROOT: /data/tmp
+    # The Google key uploaded on the Schools & Drive screen; /data is shared by api, worker and beat.
+    SECRETS_ROOT: /data/secrets
+    # /drive-local is ./drive-local on your machine, read-only: a downloaded copy of the Drive folder for
+    # DRIVE_PROVIDER=stub. Set DRIVE_STUB_ROOT_IN_DOCKER=/drive-local in .env to import from it.
+    DRIVE_STUB_ROOT: ${DRIVE_STUB_ROOT_IN_DOCKER:-/data/drive}
   volumes:
     - files:/data
+    - ./drive-local:/drive-local:ro
+    # For DRIVE_PROVIDER=google: GOOGLE_CREDENTIALS_FILE=/secrets/<file>.json
+    - ./secrets:/secrets:ro
   depends_on:
     postgres: { condition: service_healthy }
     mongo: { condition: service_healthy }
@@ -51,7 +62,8 @@ services:
 
   migrate:
     <<: *app
-    command: ["alembic", "upgrade", "head"]
+    # bootstrap --if-enabled: Schools, rubric and test users when SEED_TEST_USERS=true in .env (idempotent).
+    command: ["sh", "-c", "python -m app.cli create-db && alembic upgrade head && python -m app.cli bootstrap --if-enabled"]
     restart: "no"
 
   api:

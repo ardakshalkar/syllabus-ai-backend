@@ -4,11 +4,24 @@ from enum import StrEnum
 
 
 class Role(StrEnum):
+    admin = "admin"  # system administrator: everything provost and KOK see, plus users, roles and the catalog
     provost = "provost"
     school_admin = "school_admin"
     program_head = "program_head"
     kok = "kok"
     professor = "professor"
+
+
+class FolderStatus(StrEnum):
+    """What the School says about its own Drive folder for a semester, as distinct from what was found in it.
+
+    The claim and the count are kept apart on purpose: a School that reports `ready` while the folder holds
+    fewer syllabi than it declared is exactly the case the Provost Office needs to see.
+    """
+
+    not_started = "Not started"
+    filling = "Being filled"
+    ready = "Ready for review"
 
 
 class AiStatus(StrEnum):
@@ -63,6 +76,7 @@ class VersionSource(StrEnum):
     improve = "improve"
     wizard = "wizard"
     seed = "seed"
+    drive = "drive"
 
 
 class SessionScope(StrEnum):

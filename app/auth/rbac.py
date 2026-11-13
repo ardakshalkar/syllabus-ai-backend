@@ -1,7 +1,9 @@
 """Who may see and do what.
 
-- provost, kok: everything, university-wide.
-- school_admin: syllabi of their School.
+- admin: system administrator; everything the Provost Office sees and manages, plus users, roles and the catalog
+  (the Admin screen, app/api/admin.py). Not an approval actor: moving syllabi through approval stays academic.
+- provost, kok: everything, university-wide: see every syllabus and analytics, run checks and sessions anywhere.
+- school_admin: the same within their School.
 - program_head: syllabi of their program; moves Head of Program Review forward or back.
 - professor: syllabi of courses they lead or teach on; only the course lead uploads, improves and pre-checks.
 """
@@ -40,7 +42,7 @@ class Principal:
 
     @property
     def university_wide(self) -> bool:
-        return bool(self.roles & {Role.provost, Role.kok})
+        return bool(self.roles & {Role.admin, Role.provost, Role.kok})
 
     def has(self, *roles: Role) -> bool:
         return bool(self.roles & set(roles))
@@ -48,6 +50,20 @@ class Principal:
 
 def forbidden(detail: str = "You do not have access to this resource") -> HTTPException:
     return HTTPException(status.HTTP_403_FORBIDDEN, detail)
+
+
+def manages_school(principal: Principal, school_id: uuid.UUID | None) -> bool:
+    """Admins, the Provost Office and KOK manage every School; a School administrator manages their own."""
+    if principal.has(Role.admin, Role.provost, Role.kok):
+        return True
+    return principal.has(Role.school_admin) and school_id is not None and school_id in principal.school_ids
+
+
+def ensure_manages_school(principal: Principal, school_id: uuid.UUID | None) -> None:
+    if not manages_school(principal, school_id):
+        raise forbidden(
+            "Only the Provost Office, KOK, or a School administrator for their School can do this"
+        )
 
 
 def syllabus_filter(principal: Principal) -> sa.ColumnElement[bool]:
@@ -88,6 +104,14 @@ async def ensure_can_view(session: AsyncSession, principal: Principal, syllabus:
     )
     if not visible:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Syllabus not found")
+
+
+async def ensure_can_check(session: AsyncSession, principal: Principal, course_id: uuid.UUID) -> Course:
+    """Who may start an AI check of a course's syllabus: its lead, and whoever manages its School."""
+    course, program = await course_context(session, course_id)
+    if course.lead_id != principal.id and not manages_school(principal, program.school_id):
+        raise forbidden("Only the course leader or the School's administrators can run a check")
+    return course
 
 
 async def ensure_course_lead(session: AsyncSession, principal: Principal, course_id: uuid.UUID) -> Course:

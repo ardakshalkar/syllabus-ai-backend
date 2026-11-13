@@ -155,12 +155,11 @@ async def test_analytics(ref, client_for):
 
     overview = {r["school_name"]: r for r in (await provost.get("/overview", params=params)).json()}
     digital = overview["School of Digital Technologies"]
-    assert (digital["expected"], digital["found"], digital["checked"], digital["needs_revision"]) == (
-        3,
-        2,
-        2,
-        1,
-    )
+    assert (digital["found"], digital["checked"], digital["needs_revision"]) == (2, 2, 1)
+    assert "expected" not in digital
+    # Every School is listed, including one with no course yet (its Drive folder is still empty).
+    schools = (await provost.get("/schools")).json()
+    assert {school["name"] for school in schools} <= set(overview)
 
     heatmap = (await provost.get("/analytics/heatmap", params=params)).json()
     assert len(heatmap["principles"]) == 9
@@ -224,14 +223,25 @@ async def test_wizard_generates_checked_draft(ref, client_for):
 async def test_auth(ref, anon, client_for):
     assert (await anon.get("/me")).status_code == 401
     assert (await anon.get("/syllabi", headers={"Authorization": "Bearer nope"})).status_code == 401
-    login = await anon.post("/auth/dev-login", json={"email": "shalkar@demo.narxoz.kz"})
-    assert login.status_code == 200 and "syllabus_token" in login.cookies
-    me = (await anon.get("/me", cookies=login.cookies)).json()
+    stranger = await anon.get("/me", headers={"Authorization": "Bearer stub:nobody@demo.narxoz.kz"})
+    assert stranger.status_code == 403
+    me = (await client_for(ref["users"]["shalkar"]).get("/me")).json()
     assert me["name"] == "A. Shalkarbayuly"
     assert len(me["led_course_ids"]) == 1 and len(me["taught_course_ids"]) == 2
-    assert (await anon.get("/auth/google/login")).status_code == 503
     rubric = (await client_for(ref["users"]["kok"]).get("/rubric")).json()
     assert rubric["code"] == "2026.1" and sum(len(p["criteria"]) for p in rubric["principles"]) == 49
+    integrations = (await client_for(ref["users"]["kok"]).get("/integrations")).json()
+    assert integrations == {"auth": "stub", "drive": "stub", "email": "console", "llm": "fake"}
+
+
+async def test_catalog(ref, client_for):
+    client = client_for(ref["users"]["kok"])
+    programs = (await client.get("/programs")).json()
+    assert ref["programs"]["cs"].slug in [p["slug"] for p in programs]
+    assert {p["has_passport"] for p in programs} <= {True, False}
+    school = ref["schools"]["digital"].id
+    scoped = (await client.get("/programs", params={"school_id": str(school)})).json()
+    assert scoped and all(p["school_id"] == str(school) for p in scoped)
 
 
 def _principal(user):

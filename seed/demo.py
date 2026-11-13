@@ -1,7 +1,7 @@
 """Load the prototype's demo data (lib/data.ts) with synthetic documents and run their AI checks.
 
 Run: `python -m app.cli seed`. Idempotent: does nothing if the schools already exist.
-Demo logins (POST /api/v1/auth/dev-login): provost@demo.narxoz.kz, kok@demo.narxoz.kz,
+Demo users (bearer token `stub:<email>`): provost@demo.narxoz.kz, kok@demo.narxoz.kz,
 admin.digital@demo.narxoz.kz, head.cs@demo.narxoz.kz and the professors below (e.g. shalkar@demo.narxoz.kz).
 """
 
@@ -119,7 +119,9 @@ async def _reference_data(session: AsyncSession) -> dict[str, dict]:
     }
     session.add_all(courses.values())
     folders = {
-        school: UploadFolder(school_id=schools[school].id, path=path, semester=SEMESTER)
+        school: UploadFolder(
+            school_id=schools[school].id, path=path, semester=SEMESTER, drive_folder_id=f"demo-{school}"
+        )
         for school, path in FOLDERS
     }
     session.add_all(folders.values())

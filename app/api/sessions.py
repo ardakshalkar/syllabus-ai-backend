@@ -1,9 +1,9 @@
 import uuid
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 
 from app.deps import CurrentUser, DbSession
-from app.models import CheckSession
+from app.models import CheckSession, User
 from app.schemas.work import SessionCreate, SessionItemOut, SessionOut
 from app.services import sessions
 from app.workers import dispatch
@@ -13,9 +13,13 @@ router = APIRouter(tags=["sessions"])
 
 async def _out(session: DbSession, cs: CheckSession) -> SessionOut:
     await session.refresh(cs)
+    # The session list shows who started a check, so the name travels with the row rather than
+    # leaving the browser to resolve each id. Repeat lookups are served by the identity map.
+    creator = await session.get(User, cs.created_by)
     return SessionOut.model_validate(
         {
             **{c.key: getattr(cs, c.key) for c in CheckSession.__table__.columns},
+            "created_by_name": creator.name if creator else "",
             "progress": await sessions.progress(session, cs.id),
         }
     )
@@ -49,6 +53,14 @@ async def items(
 ):
     await sessions.get_session_obj(session, principal, session_id)
     return await sessions.items(session, session_id, limit=limit, offset=offset)
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete(session_id: uuid.UUID, principal: CurrentUser, session: DbSession) -> Response:
+    cs = await sessions.get_session_obj(session, principal, session_id)
+    await sessions.delete(session, principal, cs)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/sessions/{session_id}/pause", response_model=SessionOut)

@@ -7,9 +7,18 @@ import sqlalchemy as sa
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.rbac import Principal, forbidden
+from app.auth.rbac import Principal, forbidden, manages_school
 from app.db.pg import session_scope
-from app.enums import CheckKind, Role, RunStatus, SessionItemStatus, SessionScope, SessionStatus, Trigger
+from app.enums import (
+    AiStatus,
+    CheckKind,
+    Role,
+    RunStatus,
+    SessionItemStatus,
+    SessionScope,
+    SessionStatus,
+    Trigger,
+)
 from app.models import (
     AssessmentRun,
     CheckSession,
@@ -21,7 +30,8 @@ from app.models import (
     SyllabusVersion,
     UploadFolder,
 )
-from app.services.checks import create_run
+from app.services import run_live
+from app.services.checks import create_run, refresh_ai_status
 from app.services.notifications import notify, users_with_role
 from app.workers import dispatch
 
@@ -59,11 +69,11 @@ async def _scope_school(
 
 
 def ensure_can_manage(principal: Principal, school_id: uuid.UUID | None) -> None:
-    if principal.has(Role.provost):
-        return
-    if principal.has(Role.school_admin) and school_id is not None and school_id in principal.school_ids:
-        return
-    raise forbidden("Only the Provost Office, or a School administrator for their School, can run sessions")
+    """Sessions and School folders: Provost Office and KOK everywhere, a School administrator in their School."""
+    if not manages_school(principal, school_id):
+        raise forbidden(
+            "Only the Provost Office, KOK, or a School administrator for their School can do this"
+        )
 
 
 async def create(
@@ -78,6 +88,8 @@ async def create(
     scheduled_at: datetime | None,
     notify_provost: bool,
     notify_school: bool,
+    only_unchecked: bool = False,
+    only_checked: bool = False,
 ) -> tuple[CheckSession, list[uuid.UUID]]:
     """Returns the session and the run ids to dispatch after commit (empty when scheduled)."""
     school_id = await _scope_school(session, scope_type, scope_ref)
@@ -96,6 +108,8 @@ async def create(
         status=SessionStatus.scheduled,
         notify_provost=notify_provost,
         notify_school=notify_school,
+        only_unchecked=only_unchecked,
+        only_checked=only_checked,
         created_by=principal.id,
     )
     session.add(cs)
@@ -116,7 +130,18 @@ async def _resolve_versions(session: AsyncSession, cs: CheckSession) -> list[tup
             (r[0], r[1])
             for r in (await session.execute(query.where(SyllabusVersion.id == cs.scope_ref))).all()
         ]
-    query = query.where(Syllabus.semester == cs.semester, SyllabusVersion.version == Syllabus.current_version)
+    query = query.where(
+        Syllabus.semester == cs.semester,
+        SyllabusVersion.version == Syllabus.current_version,
+        Syllabus.drive_missing_at.is_(None),  # its file left Google Drive
+    )
+    if cs.only_unchecked:
+        # Checked, needing revision, or being checked right now: none of those is waiting for the AI.
+        query = query.where(
+            Syllabus.ai_status.not_in([AiStatus.checked, AiStatus.needs_revision, AiStatus.processing])
+        )
+    elif cs.only_checked:
+        query = query.where(Syllabus.ai_status.in_([AiStatus.checked, AiStatus.needs_revision]))
     if cs.scope_type == SessionScope.school:
         query = query.where(Program.school_id == cs.scope_ref)
     elif cs.scope_type == SessionScope.program:
@@ -167,6 +192,52 @@ async def resume(session: AsyncSession, principal: Principal, cs: CheckSession) 
             )
         )
     )
+
+
+async def delete(session: AsyncSession, principal: Principal, cs: CheckSession) -> None:
+    """Delete a session in any status, so its checks stop holding up the queue for newer sessions.
+
+    Queued runs are dropped (their tasks still in the broker find nothing and exit). A run in progress is
+    marked Failed; its worker notices at the next phase and stops. Finished runs stay in the syllabus history.
+    """
+    ensure_can_manage(principal, await _scope_school(session, cs.scope_type, cs.scope_ref))
+    await session.execute(sa.select(CheckSession.id).where(CheckSession.id == cs.id).with_for_update())
+    in_session = AssessmentRun.session_id == cs.id
+    open_version_ids = list(
+        await session.scalars(
+            sa.select(AssessmentRun.version_id).where(
+                in_session, AssessmentRun.status.in_((RunStatus.queued, RunStatus.processing))
+            )
+        )
+    )
+    no_sync = {"synchronize_session": False}
+    await session.execute(
+        sa.delete(SessionItem).where(SessionItem.session_id == cs.id), execution_options=no_sync
+    )
+    await session.execute(
+        sa.delete(AssessmentRun).where(in_session, AssessmentRun.status == RunStatus.queued),
+        execution_options=no_sync,
+    )
+    await session.execute(
+        sa.update(AssessmentRun)
+        .where(in_session, AssessmentRun.status == RunStatus.processing)
+        .values(status=RunStatus.failed, error="Cancelled: the session was deleted", completed_at=_now()),
+        execution_options=no_sync,
+    )
+    await session.execute(
+        sa.update(AssessmentRun).where(in_session).values(session_id=None), execution_options=no_sync
+    )
+    if open_version_ids:
+        syllabi = await session.scalars(
+            sa.select(Syllabus)
+            .join(SyllabusVersion, SyllabusVersion.syllabus_id == Syllabus.id)
+            .where(SyllabusVersion.id.in_(open_version_ids))
+            .distinct()
+        )
+        for syllabus in syllabi:
+            await refresh_ai_status(session, syllabus)
+    await session.execute(sa.delete(CheckSession).where(CheckSession.id == cs.id), execution_options=no_sync)
+    session.expunge(cs)
 
 
 async def on_run_finished(session: AsyncSession, run: AssessmentRun, *, ok: bool) -> None:
@@ -242,24 +313,68 @@ async def progress(session: AsyncSession, session_id: uuid.UUID) -> dict[str, in
 
 async def get_session_obj(session: AsyncSession, principal: Principal, session_id: uuid.UUID) -> CheckSession:
     cs = await session.get(CheckSession, session_id)
-    if cs is None or not _visible(principal, cs, await _scope_school(session, cs.scope_type, cs.scope_ref)):
+    if cs is None or not await _can_read(session, principal, cs):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     return cs
 
 
-def _visible(principal: Principal, cs: CheckSession, school_id: uuid.UUID | None) -> bool:
+async def _scope_program(
+    session: AsyncSession, scope: SessionScope, ref: uuid.UUID | None
+) -> uuid.UUID | None:
+    """The program the scope names, when it names one: the program itself, or the file's own program."""
+    if ref is None:
+        return None
+    if scope == SessionScope.program:
+        return ref
+    if scope == SessionScope.file:
+        return await session.scalar(
+            sa.select(Course.program_id)
+            .join(Syllabus, Syllabus.course_id == Course.id)
+            .join(SyllabusVersion, SyllabusVersion.syllabus_id == Syllabus.id)
+            .where(SyllabusVersion.id == ref)
+        )
+    return None
+
+
+async def _head_school_ids(session: AsyncSession, principal: Principal) -> set[uuid.UUID]:
+    """The Schools a Head of Program's programs belong to; a Head carries no school_id of their own."""
+    if not principal.program_ids:
+        return set()
+    return set(
+        await session.scalars(sa.select(Program.school_id).where(Program.id.in_(principal.program_ids)))
+    )
+
+
+async def _can_read(
+    session: AsyncSession,
+    principal: Principal,
+    cs: CheckSession,
+    head_schools: set[uuid.UUID] | None = None,
+) -> bool:
+    """Who may read a session. Starting, pausing, resuming and deleting are each checked separately
+    against ensure_can_manage, so being able to follow a session never implies controlling it."""
     if principal.university_wide or cs.created_by == principal.id:
         return True
-    return principal.has(Role.school_admin) and school_id in principal.school_ids
+    school_id = await _scope_school(session, cs.scope_type, cs.scope_ref)
+    if principal.has(Role.school_admin) and school_id in principal.school_ids:
+        return True
+    if principal.has(Role.program_head) and principal.program_ids:
+        # A Head of Program follows the checks that cover their own program without starting any.
+        program_id = await _scope_program(session, cs.scope_type, cs.scope_ref)
+        if program_id is not None:
+            return program_id in principal.program_ids
+        # A university check covers every program; a School or folder covers the Heads inside that School.
+        if school_id is None:
+            return True
+        schools = await _head_school_ids(session, principal) if head_schools is None else head_schools
+        return school_id in schools
+    return False
 
 
 async def list_sessions(session: AsyncSession, principal: Principal) -> list[CheckSession]:
     rows = list(await session.scalars(sa.select(CheckSession).order_by(CheckSession.created_at.desc())))
-    return [
-        cs
-        for cs in rows
-        if _visible(principal, cs, await _scope_school(session, cs.scope_type, cs.scope_ref))
-    ]
+    head_schools = await _head_school_ids(session, principal)
+    return [cs for cs in rows if await _can_read(session, principal, cs, head_schools)]
 
 
 async def items(session: AsyncSession, session_id: uuid.UUID, *, limit: int, offset: int) -> list[dict]:
@@ -281,6 +396,9 @@ async def items(session: AsyncSession, session_id: uuid.UUID, *, limit: int, off
             .offset(offset)
         )
     ).all()
+    live = await run_live.progress(
+        item.run_id for item, *_ in rows if item.run_id and item.status == SessionItemStatus.processing
+    )
     return [
         {
             "id": item.id,
@@ -291,6 +409,8 @@ async def items(session: AsyncSession, session_id: uuid.UUID, *, limit: int, off
             "filename": filename,
             "version": version,
             "status": item.status,
+            "phase": live[item.run_id]["phase"] if item.run_id in live else None,
+            "progress": live.get(item.run_id) if item.run_id else None,
             "issues": issue_count if item.status == SessionItemStatus.done else None,
             "error": item.error,
             "updated_at": item.updated_at,

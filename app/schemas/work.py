@@ -2,11 +2,11 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.enums import CheckKind, SessionItemStatus, SessionScope, SessionStatus, Trigger
 from app.schemas.common import Schema
-from app.schemas.syllabus import RunOut, VersionOut
+from app.schemas.syllabus import RunOut, RunProgress, VersionOut
 
 
 class SessionCreate(Schema):
@@ -18,6 +18,18 @@ class SessionCreate(Schema):
     scheduled_at: datetime | None = None
     notify_provost: bool = True
     notify_school: bool = False
+    only_unchecked: bool = Field(
+        default=False, description="check only syllabi the AI has not checked yet, skipping the rest"
+    )
+    only_checked: bool = Field(
+        default=False, description="check again only syllabi the AI has already checked, skipping the rest"
+    )
+
+    @model_validator(mode="after")
+    def _one_filter(self) -> "SessionCreate":
+        if self.only_unchecked and self.only_checked:
+            raise ValueError("only_unchecked and only_checked cannot both be set")
+        return self
 
 
 class SessionProgress(Schema):
@@ -40,9 +52,12 @@ class SessionOut(Schema):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
-    created_by: uuid.UUID
+    created_by: uuid.UUID | None
+    created_by_name: str | None
     notify_provost: bool
     notify_school: bool
+    only_unchecked: bool
+    only_checked: bool
     progress: SessionProgress
 
 
@@ -55,6 +70,9 @@ class SessionItemOut(Schema):
     filename: str
     version: int
     status: SessionItemStatus
+    # While Processing: what the worker is doing, e.g. "Evaluating 45 criteria (3/9 principles)".
+    phase: str | None = None
+    progress: RunProgress | None = None
     issues: int | None
     error: str | None
     updated_at: datetime
@@ -106,6 +124,7 @@ class PrecheckOut(Schema):
     filename: str
     status: Literal["Queued", "Processing", "Completed", "Failed"]
     phase: str | None
+    progress: RunProgress | None = None
     result: dict | None
     error: str | None
 
@@ -162,7 +181,6 @@ class GenerateOut(Schema):
 class OverviewSchool(Schema):
     school_id: uuid.UUID
     school_name: str
-    expected: int
     found: int
     checked: int
     needs_revision: int

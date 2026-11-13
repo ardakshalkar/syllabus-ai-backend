@@ -7,3 +7,6 @@ var/
 .mypy_cache/
 .ruff_cache/
 celerybeat-schedule*
+drive-local/
+secrets/
+.DS_Store

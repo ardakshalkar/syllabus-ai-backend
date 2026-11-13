@@ -155,18 +155,21 @@ async def runs_by_trigger(session: AsyncSession, principal: Principal, *, semest
 
 
 async def overview(session: AsyncSession, principal: Principal, *, semester: str) -> list[dict]:
-    """School cards on the Overview page."""
-    expected = dict(
-        (
-            await session.execute(
-                sa.select(Program.school_id, sa.func.count(Course.id))
-                .join(Course, Course.program_id == Program.id)
-                .where(syllabus_filter(principal))
-                .group_by(Program.school_id)
-            )
-        ).all()
-    )
+    """School cards on the Overview page: one row per School the principal answers for, empty or not.
+
+    The joins down to Course are outer joins. A School's courses are created from the files the Drive
+    sync finds, so a School whose folder is still empty has none; inner joins dropped it from the page,
+    and the Provost Office saw one School of five. The scope filter sits in the Syllabus join, so it
+    limits what is counted rather than which Schools are listed. There is no expected count: the
+    University does not want one, and the School's own status per folder is read on Collection instead.
+    """
     s = Syllabus
+    listed: sa.ColumnElement[bool] = sa.true()
+    if not principal.university_wide:
+        # A School administrator's School, the Schools of a Head's programs, and any School where
+        # something is visible to them (a professor's courses).
+        own = sa.select(Program.school_id).where(Program.id.in_(principal.program_ids))
+        listed = sa.or_(School.id.in_(principal.school_ids), School.id.in_(own), sa.func.count(s.id) > 0)
     rows = (
         await session.execute(
             sa.select(
@@ -182,11 +185,13 @@ async def overview(session: AsyncSession, principal: Principal, *, semester: str
                 sa.func.max(s.updated_at),
             )
             .select_from(School)
-            .join(Program, Program.school_id == School.id)
-            .join(Course, Course.program_id == Program.id)
-            .outerjoin(s, sa.and_(s.course_id == Course.id, s.semester == semester))
-            .where(syllabus_filter(principal))
+            .outerjoin(Program, Program.school_id == School.id)
+            .outerjoin(Course, Course.program_id == Program.id)
+            .outerjoin(
+                s, sa.and_(s.course_id == Course.id, s.semester == semester, syllabus_filter(principal))
+            )
             .group_by(School.id, School.name)
+            .having(listed)
             .order_by(School.name)
         )
     ).all()
@@ -194,7 +199,6 @@ async def overview(session: AsyncSession, principal: Principal, *, semester: str
         {
             "school_id": sid,
             "school_name": name,
-            "expected": expected.get(sid, 0),
             "found": found,
             "checked": checked,
             "needs_revision": needs,
@@ -210,14 +214,11 @@ async def overview_csv(session: AsyncSession, principal: Principal, *, semester:
     rows = await overview(session, principal, semester=semester)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(
-        ["School", "Expected", "Found", "Checked", "Needs revision", "Awaiting approval", "Approved"]
-    )
+    writer.writerow(["School", "Found", "Checked", "Needs revision", "Awaiting approval", "Approved"])
     for r in rows:
         writer.writerow(
             [
                 r["school_name"],
-                r["expected"],
                 r["found"],
                 r["checked"],
                 r["needs_revision"],

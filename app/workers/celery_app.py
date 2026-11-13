@@ -16,6 +16,14 @@ celery_app.conf.update(
     beat_schedule={
         "start-due-sessions": {"task": "syllabus.start_due_sessions", "schedule": 60.0},
         "send-pending-emails": {"task": "syllabus.send_pending_emails", "schedule": 60.0},
+        "sync-drive-files": {"task": "syllabus.sync_drive_files", "schedule": 60.0},
+        # Syllabi read from Google Drive: the catalog of the Schools' folders (services/drive_catalog.py).
+        "sync-drive-catalog": {
+            "task": "syllabus.sync_drive_catalog",
+            "schedule": float(settings.drive_sync_interval_s),
+        },
+        # Runs left Processing by a killed worker; see app/services/run_live.py.
+        "recover-stale-runs": {"task": "syllabus.recover_stale_runs", "schedule": 120.0},
     },
     timezone="UTC",
 )
