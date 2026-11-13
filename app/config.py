@@ -76,9 +76,9 @@ class Settings(BaseSettings):
     auth_service_verify_path: str = "/verify"
     auth_service_timeout_s: float = 5
 
-    # vllm, llamacpp (llama-server) and ollama all speak the OpenAI chat API; they differ only in how
-    # thinking is switched off. fake: heuristics, no model.
-    llm_provider: Literal["vllm", "llamacpp", "ollama", "fake"] = "fake"
+    # vllm, llamacpp (llama-server), ollama and openrouter (hosted, https://openrouter.ai/api/v1 with an API
+    # key) all serve chat models; they differ only in how thinking is switched off. fake: heuristics, no model.
+    llm_provider: Literal["vllm", "llamacpp", "ollama", "openrouter", "fake"] = "fake"
     # Thinking models (Qwen3, ...) reason before the JSON answer. It made every check time out, so it is off
     # unless set to true.
     llm_thinking: bool = False
@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 180
     llm_max_retries: int = 3
     llm_output_language: str = "English"
+    # OpenRouter's key. LLM_PROVIDER=openrouter uses it when LLM_API_KEY is not set, and the decision model
+    # always does, so one key in .env serves both.
+    openrouter_api_key: str = ""
+    # A decision model on OpenRouter (e.g. google/gemini-decision-1) gives every criterion its status in one
+    # request; the chat model then only writes evidence, explanation and recommendation for the criteria that
+    # are not Compliant. Empty: the chat model decides every status itself, one request per principle.
+    decision_model: str = ""
+    decision_url: str = "https://openrouter.ai/api/alpha/decisions"
     checker_version: str = "2026.10"
     evidence_match_threshold: int = 85
 

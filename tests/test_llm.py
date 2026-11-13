@@ -70,6 +70,16 @@ async def test_thinking_is_switched_off_the_way_each_server_expects(monkeypatch,
     assert seen["response_format"]["type"] == "json_schema"
 
 
+async def test_openrouter_is_only_routed_to_hosts_that_honour_the_schema(monkeypatch):
+    llm, seen = _provider(monkeypatch, '{"ok": true}', LLM_PROVIDER="openrouter")
+    assert await _ask(llm) == {"ok": True}
+    assert seen["provider"] == {"require_parameters": True}
+    assert seen["response_format"]["type"] == "json_schema"
+    assert "chat_template_kwargs" not in seen
+    # OpenRouter's own switch for reasoning, so a reasoning model answers at once.
+    assert seen["reasoning"] == {"effort": "none"}
+
+
 async def test_thinking_can_be_left_on(monkeypatch):
     llm, seen = _provider(monkeypatch, '{"ok": true}', LLM_PROVIDER="llamacpp", LLM_THINKING="true")
     await _ask(llm)

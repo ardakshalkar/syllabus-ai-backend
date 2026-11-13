@@ -202,6 +202,11 @@ class FakeProvider:
         meta = meta or {}
         if purpose == "criteria":
             return {"results": [_judge(s, meta["content"], meta["report"]) for s in meta["criteria"]]}
+        if purpose == "explain":
+            # The status was decided elsewhere (a decision model); only the text is written.
+            keep = ("criterion_id", "evidence", "explanation", "recommendation")
+            judged = [_judge(s, meta["content"], meta["report"]) for s in meta["criteria"]]
+            return {"results": [{k: r[k] for k in keep} for r in judged]}
         if purpose == "proposals":
             items = [_propose(r, meta["content"]) for r in meta["failing"]]
             return {"proposals": [i for i in items if i]}

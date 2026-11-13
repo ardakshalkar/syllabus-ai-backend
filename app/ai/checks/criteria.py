@@ -37,6 +37,48 @@ Rules:
 - Be brief: the answer is read by software, not by people."""
 
 
+# When a decision model has already given each criterion its status (app.ai.decisions), the chat model only
+# writes the text that goes with it.
+EXPLAIN_SYSTEM_PROMPT = """You review university course syllabi for Narxoz University against a quality rubric.
+Every criterion you are given already has its status, decided by a separate reviewer. Do not change it.
+Statuses mean:
+- "Partially compliant": addressed, but incompletely or ambiguously.
+- "Not compliant": missing or contradicted.
+- "Cannot verify": the syllabus text alone is not enough to decide.
+For every criterion write:
+- "evidence": copied verbatim from the syllabus: one short passage, at most 200 characters. Never paraphrase.
+  When something is missing, quote the closest related passage (for example the outcome that is not assessed).
+- "explanation": why the evidence leads to the given status, in one short sentence.
+- "recommendation": one concrete edit the professor can make, in one sentence.
+- Write explanation and recommendation in {language}. Keep evidence in the syllabus's original language.
+- Judge only what is written. Do not assume content that is not in the document.
+- Be brief: the answer is read by software, not by people."""
+
+
+def explain_schema(codes: list[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["results"],
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["criterion_id", "evidence", "explanation", "recommendation"],
+                    "properties": {
+                        "criterion_id": {"type": "string", "enum": codes},
+                        "evidence": {"type": "string"},
+                        "explanation": {"type": "string"},
+                        "recommendation": {"type": "string"},
+                    },
+                },
+            }
+        },
+    }
+
+
 def response_schema(codes: list[str]) -> dict[str, Any]:
     return {
         "type": "object",
@@ -94,12 +136,22 @@ def document_text(content: ExtractedContent) -> str:
 
 
 def build_user_prompt(
-    specs: list[CriterionSpec], content: ExtractedContent, report: TechnicalReport, context: dict[str, str]
+    specs: list[CriterionSpec],
+    content: ExtractedContent,
+    report: TechnicalReport,
+    context: dict[str, str],
+    statuses: dict[str, ResultStatus] | None = None,
 ) -> str:
     """The syllabus and the structure findings come first and are the same for every principle, so the model
-    server can reuse that part of the prompt (prefix cache) for the next principle instead of reading it again."""
+    server can reuse that part of the prompt (prefix cache) for the next principle instead of reading it again.
+    `statuses`: the status already decided for each criterion, which the model explains instead of deciding."""
     criteria = [
-        {"criterion_id": s.code, "criterion": s.name, **({"guidance": s.guidance} if s.guidance else {})}
+        {
+            "criterion_id": s.code,
+            "criterion": s.name,
+            **({"guidance": s.guidance} if s.guidance else {}),
+            **({"status": statuses[s.code].value} if statuses and s.code in statuses else {}),
+        }
         for s in specs
     ]
     parts = [f"Syllabus:\n<<<\n{document_text(content)}\n>>>"]
@@ -163,3 +215,61 @@ async def evaluate_principle(
                 confidence=None,
             )
     return [by_code[c] for c in codes]
+
+
+async def explain_principle(
+    llm: LLMProvider,
+    specs: list[CriterionSpec],
+    statuses: dict[str, ResultStatus],
+    confidences: dict[str, float | None],
+    content: ExtractedContent,
+    report: TechnicalReport,
+    context: dict[str, str],
+    *,
+    run_id: uuid.UUID | None = None,
+    trace: bool = True,
+) -> list[CriterionResultData]:
+    """Evidence, explanation and recommendation for criteria whose status a decision model has given."""
+    codes = [s.code for s in specs]
+    data = await llm.complete_json(
+        purpose="explain",
+        system=EXPLAIN_SYSTEM_PROMPT.format(language=get_settings().llm_output_language),
+        user=build_user_prompt(specs, content, report, context, statuses),
+        schema=explain_schema(codes),
+        meta={"criteria": specs, "statuses": statuses, "content": content, "report": report, "context": context},
+        run_id=run_id,
+        trace=trace,
+    )
+    written: dict[str, dict[str, Any]] = {}
+    for item in data.get("results", []):
+        code = item.get("criterion_id")
+        if code in codes and code not in written:
+            written[code] = item
+    out = []
+    for code in codes:
+        item = written.get(code, {})
+        out.append(
+            CriterionResultData(
+                criterion_id=code,
+                status=statuses[code],
+                evidence=(item.get("evidence") or "").strip(),
+                explanation=(item.get("explanation") or "").strip()
+                or "The evaluator returned no explanation for this criterion.",
+                recommendation=(item.get("recommendation") or "").strip(),
+                confidence=confidences.get(code),
+            )
+        )
+    return out
+
+
+def decided_compliant(code: str, confidence: float | None) -> CriterionResultData:
+    """A criterion the decision model passed: no chat model request, so no quoted evidence."""
+    sure = f" ({round(confidence * 100)}% confidence)" if confidence is not None else ""
+    return CriterionResultData(
+        criterion_id=code,
+        status=ResultStatus.compliant,
+        evidence="",
+        explanation=f"Judged compliant by the decision model{sure}.",
+        recommendation=NO_CHANGE,
+        confidence=confidence,
+    )

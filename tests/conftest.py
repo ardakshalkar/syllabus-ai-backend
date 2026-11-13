@@ -16,6 +16,19 @@ from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
 
+@pytest.fixture(autouse=True)
+def _no_hosted_models(monkeypatch):
+    """Tests without containers read the developer's .env too. A decision model or OpenRouter key set there
+    would send test syllabi to a paid service and change the verdicts the tests expect."""
+    from app.config import get_settings
+
+    monkeypatch.setenv("DECISION_MODEL", "")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture(scope="session")
 def containers(tmp_path_factory):
     with (

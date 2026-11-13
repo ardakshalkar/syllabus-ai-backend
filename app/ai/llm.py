@@ -1,4 +1,4 @@
-"""LLM access. `VllmProvider` talks to any OpenAI-compatible server (vLLM, llama.cpp's llama-server);
+"""LLM access. `VllmProvider` talks to any OpenAI-compatible server (vLLM, llama.cpp's llama-server, OpenRouter);
 `OllamaProvider` uses Ollama's native API, which can set the context size per request; `FakeProvider`
 (app.ai.fake) is for tests/dev."""
 
@@ -182,14 +182,24 @@ class _ChatProvider:
 
 
 class VllmProvider(_ChatProvider):
-    """OpenAI chat API: vLLM and llama-server."""
+    """OpenAI chat API: vLLM, llama-server and OpenRouter."""
 
     def __init__(self) -> None:
         super().__init__()
         s = get_settings()
-        self.extra_body = {} if s.llm_thinking else _NO_THINKING.get(s.llm_provider, {})
+        self.extra_body: dict[str, Any] = {} if s.llm_thinking else dict(_NO_THINKING.get(s.llm_provider, {}))
+        if s.llm_provider == "openrouter":
+            # OpenRouter routes each request to one of several hosts of the model, and some ignore
+            # response_format. require_parameters sends it only to hosts that honour the JSON schema.
+            self.extra_body["provider"] = {"require_parameters": True}
+            if not s.llm_thinking:
+                # Reasoning models think before the JSON answer, which is slow and billed as output tokens.
+                self.extra_body["reasoning"] = {"effort": "none"}
+        key = s.llm_api_key
+        if s.llm_provider == "openrouter" and key in ("", "EMPTY") and s.openrouter_api_key:
+            key = s.openrouter_api_key
         self.client = openai.AsyncOpenAI(
-            base_url=s.llm_base_url, api_key=s.llm_api_key, timeout=s.llm_timeout_s, max_retries=0
+            base_url=s.llm_base_url, api_key=key, timeout=s.llm_timeout_s, max_retries=0
         )
 
     async def _send(

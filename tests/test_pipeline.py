@@ -135,3 +135,77 @@ def test_apply_edits_paragraphs_and_table_rows(tmp_path):
     assert "LO2. Compare machine-learning methods and justify their selection." in content.paragraphs
     assert content.assessments[-1].outcomes == ["LO3", "LO4", "LO5"]
     assert content.paragraphs[-1] == "New paragraph"
+
+
+class _FakeDecider:
+    """Passes every criterion except the given ones, which it marks Not compliant; skips `skip`."""
+
+    model_version = "fake-decider"
+
+    def __init__(self, failing: set[str], skip: frozenset[str] = frozenset()) -> None:
+        self.failing, self.skip = failing, skip
+        self.asked: list[str] = []
+
+    async def decide(self, state, specs, *, run_id=None, trace=True):  # type: ignore[no-untyped-def]
+        from app.ai.decisions import Decision
+
+        self.asked = [s.code for s in specs]
+        assert state and state[0].startswith("Syllabus:")
+        return {
+            s.code: Decision(ResultStatus.not_compliant if s.code in self.failing else ResultStatus.compliant, 0.9)
+            for s in specs
+            if s.code not in self.skip
+        }
+
+
+class _CountingProvider(FakeProvider):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str]]] = []
+
+    async def complete_json(self, *, purpose, system, user, schema, meta=None, run_id=None, trace=True):  # type: ignore[no-untyped-def]
+        self.calls.append((purpose, [s.code for s in (meta or {}).get("criteria", [])]))
+        return await super().complete_json(
+            purpose=purpose, system=system, user=user, schema=schema, meta=meta, run_id=run_id, trace=trace
+        )
+
+
+async def test_decision_model_decides_and_chat_model_only_explains_failures(tmp_path):
+    content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=True)))
+    decider = _FakeDecider(failing={"1.2", "6.1"})
+    llm = _CountingProvider()
+    output = await pipeline.evaluate(content, _specs(), llm, trace=False, decider=decider)
+
+    assert len(output.results) == 49
+    by_code = {r.criterion_id: r for r in output.results}
+    # Only the two failing criteria went to the chat model, each with its principle, and only to explain.
+    assert sorted(llm.calls) == [("explain", ["1.2"]), ("explain", ["6.1"])]
+    assert by_code["6.1"].status == ResultStatus.not_compliant
+    assert by_code["6.1"].evidence and by_code["6.1"].recommendation
+    assert by_code["6.1"].confidence == 0.9
+    passed = by_code["2.1"]
+    assert passed.status == ResultStatus.compliant and passed.evidence == "" and "decision model" in passed.explanation
+    # Rules and missing external context are still decided without any model.
+    assert "3.4" not in decider.asked and by_code["3.4"].status == ResultStatus.cannot_verify
+    assert output.model_version == "fake-decider+fake-evaluator"
+
+
+async def test_criteria_the_decision_model_skips_are_decided_by_the_chat_model(tmp_path):
+    content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=True)))
+    llm = _CountingProvider()
+    output = await pipeline.evaluate(
+        content, _specs(), llm, trace=False, decider=_FakeDecider(failing=set(), skip=frozenset({"6.1"}))
+    )
+    assert llm.calls == [("criteria", ["6.1"])]
+    assert next(r for r in output.results if r.criterion_id == "6.1").status == ResultStatus.not_compliant
+
+
+def test_decision_questions_and_answers_round_trip():
+    from app.ai.decisions import build_questions, parse_answers
+
+    specs = [s for s in _specs() if s.code in ("1.2", "3.5")]
+    questions = build_questions(specs)
+    assert set(questions) == {"c_1_2", "c_3_5"}
+    assert questions["c_1_2"]["type"] == "choice"
+    assert list(questions["c_1_2"]["criteria"]) == [s.value for s in ResultStatus]
+    parsed = parse_answers(specs, {"c_1_2": {"choice": "Partially compliant", "confidence": 0.7}, "c_3_5": {"choice": "?"}})
+    assert set(parsed) == {"1.2"} and parsed["1.2"].status == ResultStatus.partial
