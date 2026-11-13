@@ -96,7 +96,7 @@ async def _context_for(session: AsyncSession, syllabus: Syllabus) -> dict[str, s
 
 
 class RunCancelled(Exception):
-    """The run stopped being Processing while it was evaluated (its session was deleted)."""
+    """The run stopped being Processing while it was evaluated (its session was deleted or cancelled)."""
 
 
 async def _set_item_status(

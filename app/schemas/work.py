@@ -36,6 +36,8 @@ class SessionProgress(Schema):
     total: int
     done: int
     failed: int
+    # Files the session never checked because it was cancelled; neither completed nor pending.
+    cancelled: int = 0
     completed: int
     pending: int
 

@@ -69,6 +69,7 @@ class RunStatus(StrEnum):
     processing = "Processing"
     completed = "Completed"
     failed = "Failed"
+    cancelled = "Cancelled"
 
 
 class VersionSource(StrEnum):
@@ -92,6 +93,7 @@ class SessionStatus(StrEnum):
     running = "Running"
     paused = "Paused"
     completed = "Completed"
+    cancelled = "Cancelled"
 
 
 class SessionItemStatus(StrEnum):
@@ -99,6 +101,7 @@ class SessionItemStatus(StrEnum):
     processing = "Processing"
     done = "Done"
     failed = "Failed"
+    cancelled = "Cancelled"
 
 
 class CheckKind(StrEnum):
