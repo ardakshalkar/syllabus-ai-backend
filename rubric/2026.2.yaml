@@ -1,0 +1,316 @@
+# Narxoz syllabus Quality Rubric. Imported with `python -m app.cli import-rubric rubric/2026.2.yaml`.
+# Importing never edits an existing version: change the `code` to publish a new one.
+# evaluation_type: ai | deterministic (needs `rule`) | external (needs `required_context`)
+#
+# 2026.2 follows the checklist "Чек-лист оценки силлабуса для агента" dated 22.04.2026, criterion by
+# criterion and in its order. Each criterion's `guidance` carries the checklist's indicators and its
+# example check logic, so the model judges against them rather than against the short name alone.
+code: "2026.2"
+title: "Narxoz Syllabus Quality Rubric 2026.2"
+principles:
+  - number: 1
+    name: Course content
+    criteria:
+      - name: Goals, outcomes, content and assessment are logically aligned
+        guidance: >-
+          Indicators: learning outcomes are explicitly linked to the course topics; assessment forms test
+          exactly the stated outcomes; content does not go beyond the stated goals; sections do not
+          contradict each other (e.g. the goal is analysis but assessment is only a recall test).
+          Check: extract the wording of goals, outcomes, topics and assessment types and compare them
+          semantically (key verbs, cognitive levels).
+      - name: Each section is justified and serves the learning outcomes
+        guidance: >-
+          Indicators: no "hanging" elements unrelated to the goals; every major section (topics, tasks,
+          assessment) has a clear purpose; no duplicated or contradictory elements, no repetitions
+          without a difference in meaning.
+          Check: identify sections with no link to the learning outcomes.
+      - name: Course progresses from simple to complex
+        guidance: >-
+          Indicators: the order of topics is not random; complexity increases; skills and concepts
+          visibly develop over the course.
+          Check: analyse the sequence of topics; flag jumps in complexity without transitions.
+      - name: Syllabus explains the course goals and how they are achieved
+        guidance: >-
+          Indicators: explanatory wording is present; not only lists but an explanation of the logic.
+          Check: look for connecting phrases such as "the aim is", "is aimed at", "allows students to
+          develop"; flag bare lists without explanation.
+      - name: Course builds skills in using artificial intelligence tools
+        guidance: >-
+          Indicators: the syllabus explicitly names the use of AI tools (AI, neural networks, generative
+          models, etc.); there are tasks in which AI is applied; AI use is linked to learning outcomes and
+          to specific skills; requirements for ethical and responsible AI use are stated (what is
+          permitted, limits, academic integrity when using AI, transparency of use).
+          Check: find mentions of AI and related tools; find tasks that use AI; establish the link
+          "AI use -> skill formed / task completed"; find wording on the ethics of AI use.
+  - number: 2
+    name: Academic justification
+    criteria:
+      - name: Course is embedded in the educational program
+        guidance: >-
+          Indicators: prerequisites / postrequisites are stated; the course's place in the study
+          trajectory is shown; the level is clear (bachelor, master, doctoral; required or elective);
+          the knowledge, abilities and skills it develops are described; the link to the program's
+          profile is shown.
+          Check: find prerequisites or entry-level requirements; analyse phrases like "this course is
+          intended for…"; check the semantic link to the field of study; flag generic, empty wording.
+      - name: Course reflects the current state of the discipline
+        guidance: >-
+          Indicators: current sources; contemporary theories, approaches and problems; no outdated
+          concepts without critical comment.
+          Check: analyse publication years of the sources; look for key terms of the discipline's
+          current state.
+      - name: Course has an academic core, not a set of scattered topics
+        guidance: >-
+          Indicators: the key categories of the discipline are identified; there is a central problem
+          area.
+          Check: term frequency analysis; distinguish a thematic core from a scatter of topics.
+      - name: Syllabus makes clear why the course is in the program
+        guidance: >-
+          Indicators: the course's unique contribution is described; it is shown that the course does
+          not fully duplicate other disciplines.
+          Check: analyse the goal descriptions for generic clichés; look for wording on the course's
+          unique contribution.
+  - number: 3
+    name: Learning objectives and outcomes
+    criteria:
+      - name: Course goal is distinct from learning outcomes
+        guidance: >-
+          Indicators: the goal does not repeat the outcomes word for word; the goal expresses the meaning
+          of the course, not a list of topics.
+          Check: compare the texts of the goal and the outcomes for overlap; flag a goal replaced by a
+          list of tasks.
+      - name: Course goal contributes to the goal of the educational program
+        evaluation_type: external
+        required_context: Educational Program Passport
+        guidance: >-
+          Indicators: the course goal reflects elements (wording, components of meaning) of the
+          program's goal; the goal makes clear what contribution the course makes to the program's goal.
+          Check: look for matching or semantically close key words and phrases; shared categories
+          (competences, field, level, professional orientation); action verbs ("develops", "builds",
+          "ensures mastery of", "lays the foundation for"); an indication of the result.
+      - name: Learning outcomes are a separate, structured block
+        evaluation_type: deterministic
+        rule: outcomes_numbered
+        guidance: >-
+          Indicators: an explicitly marked section; several outcomes, not one general one.
+          Check: look for headings such as "Результаты обучения" or "Learning outcomes"; count the
+          outcome statements.
+      - name: Outcomes connect to educational program outcomes
+        evaluation_type: external
+        required_context: Educational Program Passport
+        guidance: >-
+          Indicators: the course outcomes reflect elements (wording, components of meaning) of the
+          program's learning outcomes; they make clear what the course contributes to them.
+          Check: look for matching or semantically close key words and phrases; shared categories
+          (competences, field, level, professional orientation); action verbs ("develops", "builds",
+          "ensures mastery of", "lays the foundation for").
+      - name: Learning outcomes describe observable and verifiable actions
+        guidance: >-
+          Indicators: action verbs are used (analyses, interprets, argues, applies); abstract verbs are
+          avoided ("knows everything", "fully understands").
+          Check: use a dictionary of acceptable verbs (Bloom's taxonomy); flag vague wording.
+      - name: Learning outcomes go beyond reproducing information
+        guidance: >-
+          Indicators: levels of analysis, synthesis and critical thinking are present; not only "know"
+          but "apply, evaluate, interpret".
+          Check: classify the verbs by level (Bloom or equivalent); flag a skew towards low cognitive
+          levels.
+      - name: Outcomes correspond to the program level
+        guidance: >-
+          Indicators: for a master's program, research, analytical and conceptual outcomes; for a
+          bachelor's program, foundational plus applied outcomes.
+          Check: compare the program level with the types of verbs; flag mismatches (too primitive or
+          too abstract).
+  - number: 4
+    name: Logic of content structure
+    criteria:
+      - name: Course content is structured into topics, modules or sections
+        guidance: >-
+          Indicators: topic headings; division into modules, topics or weeks; no solid text without
+          structure.
+          Check: look for headings, numbering and markers; flag long unstructured passages.
+      - name: Each content block has a clear subject focus
+        guidance: >-
+          Indicators: topics do not mix different subject areas without explanation; one logic holds
+          within each topic.
+          Check: model the topics; flag blurred topics made of several unrelated clusters.
+      - name: Topics progress from basic to complex
+        guidance: >-
+          Indicators: key concepts and categories are introduced first, then theories, models, analysis
+          and critique.
+          Check: analyse the order of terms (introductory -> advanced); flag complex concepts that appear
+          before they are introduced.
+      - name: Content covers all learning outcomes
+        guidance: >-
+          Indicators: each learning outcome is matched by several topics; no outcome is left uncovered by
+          the course topics.
+          Check: map backwards, outcome -> topics; flag uncovered outcomes.
+      - name: Key questions and debates of the discipline are included
+        guidance: >-
+          Indicators: problem questions are present; different approaches, theories and practical
+          examples are mentioned.
+          Check: look for markers of debate ("approach", "concept", "debate", "controversy"); frequency
+          of scientific terms.
+      - name: Content requires analysis and interpretation, not only description of facts
+        guidance: >-
+          Indicators: verbs such as analyse, interpret, compare, evaluate are used; there are analytical
+          tasks.
+          Check: classify the verbs; flag a skew towards description.
+  - number: 5
+    name: Teaching methods
+    criteria:
+      - name: Methods align with learning outcomes
+        guidance: >-
+          Indicators: if an outcome is analysis, seminars, cases and discussions are used; if it is
+          research, there is project or research work, and so on.
+          Check: match the outcome verbs to the forms of class; flag mismatches (an analysis outcome but
+          only lectures).
+      - name: Methods match intended competencies
+        guidance: >-
+          Indicators: practical skills -> practical tasks; theoretical skills -> analytical tasks.
+          Check: compare methods and skills semantically; flag methods listed only for form's sake.
+      - name: More than one form of teaching is used
+        guidance: >-
+          Indicators: not only lectures but seminars, practicals, discussions, projects; variety of
+          forms.
+          Check: find the list of class forms; count the distinct forms.
+      - name: Choice of methods is justified by the discipline
+        guidance: >-
+          Indicators: humanities -> discussions, texts; applied disciplines -> practicals, cases;
+          research-oriented -> projects, data analysis, and so on.
+          Check: compare the discipline's profile with the methods; flag template sets that ignore the
+          discipline's specifics.
+      - name: Methods give students an active role
+        guidance: >-
+          Indicators: discussions, presentations, group tasks; independent analytical work.
+          Check: look for verbs such as discusses, analyses, presents, argues; flag passive formats.
+      - name: Methods are explained, not only listed
+        guidance: >-
+          Indicators: there are explanations of why each form is used; not merely a list such as
+          "lecture, seminar".
+          Check: look for explanatory constructions.
+  - number: 6
+    name: Assessment system
+    criteria:
+      - name: Every learning outcome is assessed
+        guidance: >-
+          Indicators: outcome -> task -> grade; no outcome without an instrument that checks it.
+          Check: map outcomes to assessment forms; flag uncovered outcomes.
+      - name: Assessment form matches the outcome
+        guidance: >-
+          Indicators: analysis -> essay, case; skills -> practical work; knowledge -> test, and so on.
+          Check: use a "type of outcome -> type of assessment" matrix; flag mismatches.
+      - name: All assessment tasks are listed and described
+        guidance: >-
+          Indicators: every task is listed; no "hidden" forms of assessment.
+          Check: find the "Assessment" / "Assessment criteria" section; extract the list of tasks.
+      - name: It is clear what marks are given for and how
+        guidance: >-
+          Indicators: assessment criteria are stated; requirements are described; weights are given.
+          Check: look for words such as criteria, points, weight, percent; flag missing explanations of
+          the assessment criteria.
+      - name: Workload is distributed evenly across the course
+        guidance: >-
+          Indicators: not all assessment is at the end of the course; there is continuous assessment.
+          Check: analyse the calendar and topic plan; flag concentrations of assessment.
+      - name: Multiple assessment types are used
+        guidance: >-
+          Indicators: several forms of assessment (test, essay, project, presentation, etc.); a variety
+          of instruments.
+          Check: count the types of assessment; flag single-mode assessment (only tests, or only an
+          exam).
+      - name: Assessment supports students (feedback, formative assessment)
+        guidance: >-
+          Indicators: formative assessment; feedback; the possibility to revise work.
+          Check: look for words such as feedback, comments, revision; flag a purely final, no-appeal
+          model.
+  - number: 7
+    name: Resources
+    criteria:
+      - name: Core and supplementary literature reflect the current state of the discipline
+        guidance: >-
+          Indicators: current literature and sources (year of publication, reputable publishers); key
+          concepts and approaches are represented; the reading list supports the course goal.
+          Check: analyse publication years and how often key authors appear; check relevance to the
+          discipline.
+      - name: Core literature is held in the university's Scientific Library
+        evaluation_type: external
+        required_context: Narxoz library catalogue
+        guidance: >-
+          Indicators: the literature named in the syllabus is held by the university's Scientific
+          Library, in print or electronically.
+          Check: look up each item of the syllabus's literature in the Scientific Library's catalogue.
+      - name: Learning and scholarly resources are actually used in the course
+        guidance: >-
+          Indicators: references to articles, databases, lab work, cases; the material used matches the
+          course goals and learning outcomes.
+          Check: verify that references to active resources are present; compare the resources with the
+          course topics.
+      - name: Materials are structured and accessible to students
+        guidance: >-
+          Indicators: materials are divided by topic or module; there are instructions for using them;
+          the format suits independent work.
+          Check: look for headings and structural elements; check that formats and instructions are
+          consistent.
+      - name: Materials support all stated learning outcomes
+        guidance: >-
+          Indicators: the material covers the skills and knowledge described in the outcomes; there are
+          no gaps between the material and the goals.
+          Check: compare topics and resources semantically; flag uncovered outcomes.
+  - number: 8
+    name: Accessibility and clarity
+    criteria:
+      - name: Syllabus uses clear academic language
+        guidance: >-
+          Indicators: the text is readable; no complex or cumbersome constructions without explanation;
+          logical connections between sections.
+          Check: analyse sentence structure and paragraph length; flag overly complex wording.
+      - name: Information is structured for students to take in easily
+        guidance: >-
+          Indicators: sections, headings, tables, bulleted lists; a sensible order of presentation.
+          Check: identify structural elements; check the order of the blocks.
+      - name: Syllabus shows the active role of students
+        guidance: >-
+          Indicators: tasks, projects, discussions, presentations; independent analytical work.
+          Check: look for active wording ("the student analyses", "completes", "presents"); flag passive
+          constructions.
+      - name: Course rules and requirements are transparent to students
+        guidance: >-
+          Indicators: deadlines, forms of reporting and assessment criteria are clearly described; no
+          hidden requirements.
+          Check: look for key words such as deadline, criterion, report; check that all necessary
+          instructions are present.
+  - number: 9
+    name: Course policy
+    criteria:
+      - name: Academic integrity rules are present
+        guidance: >-
+          Indicators: rules on citation, use of artificial intelligence, plagiarism and independent work
+          are stated; sanctions for violations are described.
+          Check: look for terms such as "academic integrity", "artificial intelligence", "plagiarism",
+          "independent work"; check that the rules are described completely.
+      - name: Syllabus builds a culture of responsibility and respect
+        guidance: >-
+          Indicators: rules of conduct in class; respect for the opinions of other students and
+          teachers.
+          Check: look for guidance on conduct, ethics and respect; flag the absence of conduct norms.
+      - name: Attendance policy is stated
+        guidance: >-
+          Indicators: attendance requirements are stated explicitly (a percentage or a permitted number
+          of absences); a threshold for excessive absence is defined; the consequence is stated —
+          no admission to the final exam or final assessment when the threshold is exceeded.
+          Check: find mentions of attendance; find a numeric threshold (%, number of absences); check
+          for the link "threshold exceeded -> no admission to the exam". All three are needed for
+          Compliant.
+      - name: Assessment and feedback rules are correct and ethical
+        guidance: >-
+          Indicators: a transparent grading system; feedback given properly; no discriminatory
+          requirements.
+          Check: compare the grading rules with ethical principles; check the wording for
+          discrimination.
+      - name: Mechanisms for correcting errors and appeal exist
+        guidance: >-
+          Indicators: the possibility to revise completed work; appeal procedures; reasonable deadlines
+          for corrections.
+          Check: look for wording such as "appeal", "additional revision"; check that procedures are
+          present.
