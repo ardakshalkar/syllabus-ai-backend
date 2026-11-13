@@ -109,7 +109,14 @@ async def load_rubric(session: AsyncSession, rubric_version_id: uuid.UUID | None
     )
     rubric = await session.scalar(query)
     if rubric is None:
-        raise LookupError("no active rubric; run `python -m app.cli import-rubric`")
+        if rubric_version_id is None:
+            from app.cli import RUBRIC
+
+            if RUBRIC.exists():
+                await import_rubric(session, RUBRIC)
+                rubric = await session.scalar(query)
+        if rubric is None:
+            raise LookupError("no active rubric; run `python -m app.cli import-rubric`")
     specs, ids = [], {}
     for p in rubric.principles:
         for c in p.criteria:
