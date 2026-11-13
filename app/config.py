@@ -121,7 +121,8 @@ class Settings(BaseSettings):
 
     # External staff / employees API: GET /api/v1/staff/external/employees
     staff_api_base_url: str = "https://corp-portal.narxoz.kz"
-    staff_api_token: str = "FTUyv78biruy32fewrh89uoefwTUVy9p8hu4t3"
+    # Bearer token for the staff API; set STAFF_API_TOKEN in .env, never here.
+    staff_api_token: str = ""
     staff_api_cache_ttl_s: int = 300
 
     @model_validator(mode="after")

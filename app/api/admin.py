@@ -5,7 +5,7 @@ import uuid
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from app.auth.rbac import Principal
 from app.deps import DbSession, require_role
@@ -41,7 +41,10 @@ async def list_employees(
     q: str | None = None,
     school: str | None = None,
 ):
-    raw_employees = await staff.fetch_external_employees()
+    try:
+        raw_employees = await staff.fetch_external_employees()
+    except staff.StaffApiUnavailable as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     emails = [emp.email.lower() for emp in raw_employees]
     existing: dict[str, uuid.UUID] = (
         dict(
