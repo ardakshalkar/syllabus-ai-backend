@@ -215,3 +215,48 @@ async def test_a_waiting_precheck_runs_once_whoever_starts_it(ref, client_for, m
     assert await precheck.run_waiting() == 1  # a worker on a session run took it first
     assert await precheck.run_job(job_id) is False  # its own task then finds it done
     assert (await lead.get(f"/precheck/{job_id}")).json()["status"] == "Completed"
+
+
+async def test_create_run_auto_imports_rubric_when_missing(stack):
+    from app.enums import Trigger, VersionSource
+    from app.models import Base, Course, Program, RubricVersion, School, Syllabus, SyllabusVersion
+
+    tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
+    async with pg.get_engine().begin() as conn:
+        await conn.execute(sa.text(f"TRUNCATE {tables} CASCADE"))
+
+    async with pg.session_scope() as session:
+        assert await session.scalar(sa.select(RubricVersion.id).limit(1)) is None
+
+        school = School(slug="s1", name="School 1")
+        session.add(school)
+        await session.flush()
+        prog = Program(slug="p1", name="Program 1", school_id=school.id, degree_level="Bachelor")
+        session.add(prog)
+        await session.flush()
+        course = Course(name="Course 1", slug="c1", credits=3, program_id=prog.id)
+        session.add(course)
+        await session.flush()
+        syl = Syllabus(course_id=course.id, semester="Fall 2026", current_version=1, language="English")
+        session.add(syl)
+        await session.flush()
+        ver = SyllabusVersion(
+            syllabus_id=syl.id,
+            version=1,
+            filename="s.docx",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            size=10,
+            sha256="abc",
+            source=VersionSource.upload,
+        )
+        session.add(ver)
+        await session.flush()
+
+        run = await checks.create_run(session, ver, trigger=Trigger.professor_manual)
+        assert run is not None
+        assert run.rubric_version_id is not None
+        active = await session.scalar(
+            sa.select(RubricVersion.is_active).where(RubricVersion.id == run.rubric_version_id)
+        )
+        assert active is True
+

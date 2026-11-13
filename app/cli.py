@@ -82,9 +82,19 @@ async def _setup_schools() -> None:
     async with pg.session_scope() as session:
         for name, created in await setup_schools(session):
             print(f"{'created ' if created else 'exists  '} {name}")
-        if not await session.scalar(sa.select(RubricVersion.id).limit(1)):  # a new database: checks need one
-            rubric = await import_rubric(session, RUBRIC)
-            print(f"imported rubric {rubric.code}")
+        active_rubric = await session.scalar(
+            sa.select(RubricVersion.id).where(RubricVersion.is_active.is_(True)).limit(1)
+        )
+        if not active_rubric:
+            first_rubric = await session.scalar(
+                sa.select(RubricVersion).order_by(RubricVersion.imported_at.desc()).limit(1)
+            )
+            if first_rubric:
+                first_rubric.is_active = True
+                print(f"activated rubric {first_rubric.code}")
+            else:
+                rubric = await import_rubric(session, RUBRIC)
+                print(f"imported rubric {rubric.code}")
 
 
 def _read_password(value: str | None) -> str | None:

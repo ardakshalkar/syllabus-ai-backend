@@ -50,7 +50,14 @@ async def create_run(
 ) -> AssessmentRun:
     rubric_id = await session.scalar(sa.select(RubricVersion.id).where(RubricVersion.is_active.is_(True)))
     if rubric_id is None:
-        raise LookupError("no active rubric")
+        from app.cli import RUBRIC
+        from app.services.rubric import import_rubric
+
+        if RUBRIC.exists():
+            rubric = await import_rubric(session, RUBRIC)
+            rubric_id = rubric.id
+        else:
+            raise LookupError("no active rubric")
     run = AssessmentRun(
         version_id=version.id,
         rubric_version_id=rubric_id,
