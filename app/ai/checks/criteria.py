@@ -19,12 +19,23 @@ _RESERVED_TOKENS = 4_000
 # Conservative for Cyrillic text, which takes more tokens per character than English.
 _CHARS_PER_TOKEN = 2.5
 
+# Shared with the decision model's questions (app.ai.decisions). A syllabus that lacks what a criterion asks for
+# fails it: "Cannot verify" is kept for what no syllabus could show, so it never hides a missing section.
+MISSING_RULE = (
+    "When the content the criterion depends on is absent or empty in the syllabus (for example no list of topics, "
+    "no schedule, no assessment criteria), the status is Not compliant."
+)
+CANNOT_VERIFY_RULE = (
+    "only when deciding needs information that a syllabus is not expected to contain, such as an external "
+    "document. Never use it because a section of the syllabus is missing or empty."
+)
+
 SYSTEM_PROMPT = """You review university course syllabi for Narxoz University against a quality rubric.
 For every criterion you are given, decide one status:
 - "Compliant": the syllabus clearly satisfies the criterion.
 - "Partially compliant": it is addressed, but incompletely or ambiguously.
-- "Not compliant": it is missing or contradicted.
-- "Cannot verify": the syllabus text alone is not enough to decide.
+- "Not compliant": it is missing or contradicted. {missing_rule}
+- "Cannot verify": {cannot_verify_rule}
 Rules:
 - "evidence" MUST be copied verbatim from the syllabus: one short passage, at most 200 characters. Never paraphrase.
   When something is missing, quote the closest related passage (for example the outcome that is not assessed).
@@ -43,8 +54,8 @@ EXPLAIN_SYSTEM_PROMPT = """You review university course syllabi for Narxoz Unive
 Every criterion you are given already has its status, decided by a separate reviewer. Do not change it.
 Statuses mean:
 - "Partially compliant": addressed, but incompletely or ambiguously.
-- "Not compliant": missing or contradicted.
-- "Cannot verify": the syllabus text alone is not enough to decide.
+- "Not compliant": missing or contradicted. {missing_rule}
+- "Cannot verify": {cannot_verify_rule}
 For every criterion write:
 - "evidence": copied verbatim from the syllabus: one short passage, at most 200 characters. Never paraphrase.
   When something is missing, quote the closest related passage (for example the outcome that is not assessed).
@@ -182,7 +193,11 @@ async def evaluate_principle(
     codes = [s.code for s in specs]
     data = await llm.complete_json(
         purpose="criteria",
-        system=SYSTEM_PROMPT.format(language=get_settings().llm_output_language),
+        system=SYSTEM_PROMPT.format(
+            language=get_settings().llm_output_language,
+            missing_rule=MISSING_RULE,
+            cannot_verify_rule=CANNOT_VERIFY_RULE,
+        ),
         user=build_user_prompt(specs, content, report, context),
         schema=response_schema(codes),
         meta={"criteria": specs, "content": content, "report": report, "context": context},
@@ -233,7 +248,11 @@ async def explain_principle(
     codes = [s.code for s in specs]
     data = await llm.complete_json(
         purpose="explain",
-        system=EXPLAIN_SYSTEM_PROMPT.format(language=get_settings().llm_output_language),
+        system=EXPLAIN_SYSTEM_PROMPT.format(
+            language=get_settings().llm_output_language,
+            missing_rule=MISSING_RULE,
+            cannot_verify_rule=CANNOT_VERIFY_RULE,
+        ),
         user=build_user_prompt(specs, content, report, context, statuses),
         schema=explain_schema(codes),
         meta={"criteria": specs, "statuses": statuses, "content": content, "report": report, "context": context},
