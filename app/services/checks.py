@@ -14,13 +14,24 @@ from app.ai.llm import get_llm
 from app.ai.types import EvaluationOutput, ExtractedContent
 from app.db.pg import session_scope
 from app.documents import AssessmentResultDoc, ExtractedDocument
-from app.enums import AiStatus, ApprovalStage, CheckKind, RunStatus, SessionItemStatus, SessionStatus, Trigger
+from app.enums import (
+    AiStatus,
+    ApprovalStage,
+    CheckKind,
+    RunStatus,
+    SessionItemStatus,
+    SessionStatus,
+    Severity,
+    Trigger,
+    severity,
+)
 from app.library import lookup as library
 from app.models import (
     ApprovalEvent,
     AssessmentRun,
     CheckSession,
     Course,
+    Criterion,
     CriterionOutcome,
     Program,
     RubricVersion,
@@ -201,7 +212,7 @@ async def execute_run(run_id: uuid.UUID) -> None:
         await AssessmentResultDoc(
             run_id=run_id, version_id=version.id, technical=output.technical, results=output.results
         ).insert()
-        await _complete(run_id, output, rubric.criterion_ids)
+        await _complete(run_id, output, rubric.criterion_ids, {s.code for s in rubric.specs if s.critical})
         log.info("check run %s completed in %.0fs", run_id, time.monotonic() - started)
         try:
             await run_progress.record_pace(live.state)
@@ -309,10 +320,13 @@ async def refresh_ai_status(session: AsyncSession, syllabus: Syllabus) -> None:
         syllabus.ai_status = AiStatus.needs_revision if version.issue_count else AiStatus.checked
 
 
-async def _complete(run_id: uuid.UUID, output: EvaluationOutput, criterion_ids: dict[str, uuid.UUID]) -> None:
+async def _complete(
+    run_id: uuid.UUID, output: EvaluationOutput, criterion_ids: dict[str, uuid.UUID], critical: set[str]
+) -> None:
     from app.services.sessions import on_run_finished
 
     issues = pipeline.count_issues(output.results)
+    by_severity = pipeline.count_by_severity(output.results, critical)
     async with session_scope() as session:
         run = await session.scalar(
             sa.select(AssessmentRun).where(AssessmentRun.id == run_id).with_for_update()
@@ -341,6 +355,8 @@ async def _complete(run_id: uuid.UUID, output: EvaluationOutput, criterion_ids: 
 
         if syllabus.current_version == version.version:
             syllabus.issues = issues
+            syllabus.critical_issues = by_severity[Severity.critical]
+            syllabus.major_issues = by_severity[Severity.major]
             syllabus.ai_status = AiStatus.needs_revision if issues else AiStatus.checked
             session.add(
                 ApprovalEvent(
@@ -404,6 +420,43 @@ async def _fail(run_id: uuid.UUID, error: str, ai_status: AiStatus) -> None:
 
 async def get_results(run_id: uuid.UUID) -> AssessmentResultDoc | None:
     return await AssessmentResultDoc.find_one(AssessmentResultDoc.run_id == run_id)
+
+
+async def recount_severity(session: AsyncSession) -> int:
+    """Recount every checked syllabus's critical and major findings from its latest completed run, after
+    the rubric's critical flags changed. Returns how many syllabi were recounted."""
+    rows = await session.execute(
+        sa.select(Syllabus.id, AssessmentRun.id)
+        .join(
+            SyllabusVersion,
+            sa.and_(
+                SyllabusVersion.syllabus_id == Syllabus.id, SyllabusVersion.version == Syllabus.current_version
+            ),
+        )
+        .join(AssessmentRun, AssessmentRun.version_id == SyllabusVersion.id)
+        .where(Syllabus.issues.is_not(None), AssessmentRun.status == RunStatus.completed)
+        .order_by(Syllabus.id, AssessmentRun.created_at.desc())
+        .distinct(Syllabus.id)
+    )
+    runs = {run_id: sid for sid, run_id in rows.all()}
+    counts: dict[uuid.UUID, dict[Severity, int]] = {sid: dict.fromkeys(Severity, 0) for sid in runs.values()}
+    if runs:
+        outcomes = await session.execute(
+            sa.select(CriterionOutcome.run_id, CriterionOutcome.status, Criterion.critical)
+            .join(Criterion, Criterion.id == CriterionOutcome.criterion_id)
+            .where(CriterionOutcome.run_id.in_(runs))
+        )
+        for run_id, status, critical in outcomes.all():
+            s = severity(status, critical)
+            if s:
+                counts[runs[run_id]][s] += 1
+    for sid, c in counts.items():
+        await session.execute(
+            sa.update(Syllabus)
+            .where(Syllabus.id == sid)
+            .values(critical_issues=c[Severity.critical], major_issues=c[Severity.major])
+        )
+    return len(counts)
 
 
 async def latest_run(

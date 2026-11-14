@@ -142,6 +142,8 @@ async def add_version(
     previous_stage = syllabus.approval_stage
     syllabus.current_version = number
     syllabus.issues = None
+    syllabus.critical_issues = None
+    syllabus.major_issues = None
     syllabus.ai_status = AiStatus.not_checked
     syllabus.approval_stage = ApprovalStage.draft
     if folder_id:
@@ -272,6 +274,8 @@ def row_to_dict(row: sa.Row) -> dict:
         "ai_status": s.ai_status,
         "approval_stage": s.approval_stage,
         "issues": s.issues,
+        "critical_issues": s.critical_issues,
+        "major_issues": s.major_issues,
         "folder_path": row.folder_path,
         "updated_at": s.updated_at,
         "discipline": row.discipline,

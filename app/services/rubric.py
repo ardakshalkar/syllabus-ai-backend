@@ -25,6 +25,7 @@ class _CriterionIn(BaseModel):
     rule: str | None = None
     required_context: str | None = None
     guidance: str | None = None
+    critical: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> "_CriterionIn":
@@ -81,6 +82,7 @@ async def import_rubric(session: AsyncSession, path: Path, *, activate: bool = T
                     rule=c.rule,
                     required_context=c.required_context,
                     guidance=c.guidance,
+                    critical=c.critical,
                 )
             )
     await session.flush()
@@ -90,6 +92,32 @@ async def import_rubric(session: AsyncSession, path: Path, *, activate: bool = T
         )
         rubric.is_active = True
     return rubric
+
+
+async def set_critical(session: AsyncSession, path: Path) -> list[str]:
+    """Copy the `critical` flags of a rubric YAML onto the version already imported under its code, and
+    return the codes of the criteria now critical. Nothing else may differ: a changed criterion is a new
+    version, but which findings count as critical only changes how results are reported."""
+    data = RubricFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))  # noqa: ASYNC240 (CLI only)
+    rubric = await session.scalar(select(RubricVersion).where(RubricVersion.code == data.code))
+    if rubric is None:
+        raise LookupError(f"rubric {data.code} is not imported; run `python -m app.cli import-rubric` first")
+    stored = {p.number: p for p in rubric.principles}
+    flagged: list[str] = []
+    for p in data.principles:
+        principle = stored.get(p.number)
+        if principle is None or len(principle.criteria) != len(p.criteria):
+            raise ValueError(f"principle {p.number} differs from imported rubric {data.code}")
+        for c, criterion in zip(p.criteria, principle.criteria, strict=True):
+            if c.name != criterion.name:
+                raise ValueError(
+                    f"criterion {criterion.code} is '{criterion.name}' in rubric {data.code}, not '{c.name}'"
+                )
+            criterion.critical = c.critical
+            if c.critical:
+                flagged.append(criterion.code)
+    await session.flush()
+    return flagged
 
 
 @dataclass
@@ -124,6 +152,7 @@ async def load_rubric(session: AsyncSession, rubric_version_id: uuid.UUID | None
                     required_context=c.required_context,
                     rule=c.rule,
                     guidance=c.guidance,
+                    critical=c.critical,
                 )
             )
     return LoadedRubric(rubric, specs, ids, {p.number: p.name for p in rubric.principles})

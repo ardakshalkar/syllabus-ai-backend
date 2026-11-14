@@ -1,13 +1,15 @@
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
 
 from app.auth.rbac import Principal, forbidden
 from app.deps import CurrentUser, DbSession
 from app.enums import Role
+from app.schemas.analysis import AnalysisOut, ReportOut
 from app.schemas.work import FrequentIssue, HeatmapOut, OverviewSchool, TriggerCount
-from app.services import analytics
+from app.services import analysis, analytics
 
 router = APIRouter(tags=["analytics"])
 
@@ -64,3 +66,29 @@ async def export_csv(semester: str, principal: CurrentUser, session: DbSession):
             "Content-Disposition": f'attachment; filename="syllabus-report-{semester.replace(" ", "-")}.csv"'
         },
     )
+
+
+@router.get("/analysis", response_model=AnalysisOut)
+async def analysis_summary(
+    semester: str, principal: CurrentUser, session: DbSession, school_id: uuid.UUID | None = None
+):
+    """What the AI checks found, by severity: across the university by School, or within one School."""
+    return await analysis.summary(session, _reviewer(principal), semester=semester, school_id=school_id)
+
+
+@router.get("/analysis/report", response_model=ReportOut)
+async def analysis_report(
+    semester: str,
+    principal: CurrentUser,
+    session: DbSession,
+    school_id: uuid.UUID | None = None,
+    include: Literal["summary", "critical", "all"] = "critical",
+):
+    """The analysis with each course's findings, for a printable report. Refused (422) above
+    `report_limit` courses, with what to narrow."""
+    try:
+        return await analysis.report(
+            session, _reviewer(principal), semester=semester, school_id=school_id, include=include
+        )
+    except analysis.ReportTooLarge as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc

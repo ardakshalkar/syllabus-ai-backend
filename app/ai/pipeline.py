@@ -20,7 +20,7 @@ from app.ai.types import (
     TechnicalReport,
 )
 from app.config import get_settings
-from app.enums import CheckKind, EvaluationType, ResultStatus
+from app.enums import CheckKind, EvaluationType, ResultStatus, Severity, severity
 from app.library import lookup as library
 
 ALL_CHECKS = frozenset(CheckKind)
@@ -219,3 +219,13 @@ async def evaluate(
 
 def count_issues(results: list[CriterionResultData]) -> int:
     return sum(1 for r in results if r.status in (ResultStatus.partial, ResultStatus.not_compliant))
+
+
+def count_by_severity(results: list[CriterionResultData], critical: set[str]) -> dict[Severity, int]:
+    """How many findings of each severity; `critical` holds the codes of the rubric's critical criteria."""
+    counts = dict.fromkeys(Severity, 0)
+    for r in results:
+        s = severity(r.status, r.criterion_id in critical)
+        if s:
+            counts[s] += 1
+    return counts

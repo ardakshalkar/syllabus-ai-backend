@@ -209,3 +209,40 @@ def test_decision_questions_and_answers_round_trip():
     assert list(questions["c_1_2"]["criteria"]) == [s.value for s in ResultStatus]
     parsed = parse_answers(specs, {"c_1_2": {"choice": "Partially compliant", "confidence": 0.7}, "c_3_5": {"choice": "?"}})
     assert set(parsed) == {"1.2"} and parsed["1.2"].status == ResultStatus.partial
+
+
+def test_severity_of_findings():
+    from app.enums import Severity, severity
+
+    assert severity(ResultStatus.compliant, True) is None
+    assert severity(ResultStatus.cannot_verify, True) is None
+    assert severity(ResultStatus.partial, True) == Severity.critical
+    assert severity(ResultStatus.not_compliant, False) == Severity.major
+    assert severity(ResultStatus.partial, False) == Severity.minor
+
+    def result(code: str, status: ResultStatus) -> CriterionResultData:
+        return CriterionResultData(
+            criterion_id=code, status=status, evidence="", explanation="", recommendation=""
+        )
+
+    results = [
+        result("7.1", ResultStatus.partial),
+        result("7.2", ResultStatus.not_compliant),
+        result("7.3", ResultStatus.partial),
+        result("7.4", ResultStatus.compliant),
+    ]
+    counts = pipeline.count_by_severity(results, {"7.1", "7.4"})
+    assert counts == {Severity.critical: 1, Severity.major: 1, Severity.minor: 1}
+    assert sum(counts.values()) == pipeline.count_issues(results)
+
+
+def test_rubric_critical_flags_parse():
+    import yaml
+
+    from app.services.rubric import RubricFile
+
+    path = Path(__file__).resolve().parents[1] / "rubric" / "2026.2.yaml"
+    data = RubricFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    flagged = [c.name for p in data.principles for c in p.criteria if c.critical]
+    assert "Every learning outcome is assessed" in flagged
+    assert len(flagged) == 7

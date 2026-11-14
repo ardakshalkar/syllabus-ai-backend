@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.rbac import Principal, syllabus_filter
-from app.enums import ISSUE_STATUSES, AiStatus, ApprovalStage, RunStatus
+from app.enums import ISSUE_STATUSES, AiStatus, ApprovalStage, ResultStatus, RunStatus
 from app.models import (
     AssessmentRun,
     Course,
@@ -123,19 +123,37 @@ async def frequent_issues(
     rows = (
         await session.execute(
             sa.select(
-                Criterion.code, Criterion.name, sa.func.count(sa.distinct(latest.c.syllabus_id)).label("n")
+                Criterion.code,
+                Criterion.name,
+                Criterion.critical,
+                Principle.number,
+                Principle.name,
+                sa.func.count(sa.distinct(latest.c.syllabus_id)).label("n"),
+                sa.func.count(sa.distinct(latest.c.syllabus_id)).filter(
+                    CriterionOutcome.status == ResultStatus.not_compliant
+                ),
             )
             .join(CriterionOutcome, CriterionOutcome.run_id == latest.c.run_id)
             .join(Criterion, Criterion.id == CriterionOutcome.criterion_id)
+            .join(Principle, Principle.id == Criterion.principle_id)
             .where(CriterionOutcome.status.in_(ISSUE_STATUSES))
-            .group_by(Criterion.code, Criterion.name)
+            .group_by(Criterion.code, Criterion.name, Criterion.critical, Principle.number, Principle.name)
             .order_by(sa.desc("n"), Criterion.code)
             .limit(limit)
         )
     ).all()
     return [
-        {"criterion_id": code, "name": name, "syllabi": n, "percent": round(100 * n / total) if total else 0}
-        for code, name, n in rows
+        {
+            "criterion_id": code,
+            "name": name,
+            "critical": critical,
+            "principle": number,
+            "principle_name": principle_name,
+            "syllabi": n,
+            "not_compliant": not_compliant,
+            "percent": round(100 * n / total) if total else 0,
+        }
+        for code, name, critical, number, principle_name, n, not_compliant in rows
     ]
 
 

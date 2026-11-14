@@ -1,6 +1,8 @@
 # Narxoz syllabus Quality Rubric. Imported with `python -m app.cli import-rubric rubric/2026.2.yaml`.
 # Importing never edits an existing version: change the `code` to publish a new one.
 # evaluation_type: ai | deterministic (needs `rule`) | external (needs `required_context`)
+# critical: true marks a criterion whose finding is critical. Changing it needs no new version:
+# `python -m app.cli set-critical rubric/2026.2.yaml` updates the imported one and recounts syllabi.
 #
 # 2026.2 follows the checklist "Чек-лист оценки силлабуса для агента" dated 22.04.2026, criterion by
 # criterion and in its order. Each criterion's `guidance` carries the checklist's indicators and its
@@ -89,6 +91,7 @@ principles:
           (competences, field, level, professional orientation); action verbs ("develops", "builds",
           "ensures mastery of", "lays the foundation for"); an indication of the result.
       - name: Learning outcomes are a separate, structured block
+        critical: true
         evaluation_type: deterministic
         rule: outcomes_numbered
         guidance: >-
@@ -105,6 +108,7 @@ principles:
           (competences, field, level, professional orientation); action verbs ("develops", "builds",
           "ensures mastery of", "lays the foundation for").
       - name: Learning outcomes describe observable and verifiable actions
+        critical: true
         guidance: >-
           Indicators: action verbs are used (analyses, interprets, argues, applies); abstract verbs are
           avoided ("knows everything", "fully understands").
@@ -141,6 +145,7 @@ principles:
           Check: analyse the order of terms (introductory -> advanced); flag complex concepts that appear
           before they are introduced.
       - name: Content covers all learning outcomes
+        critical: true
         guidance: >-
           Indicators: each learning outcome is matched by several topics; no outcome is left uncovered by
           the course topics.
@@ -193,6 +198,7 @@ principles:
     name: Assessment system
     criteria:
       - name: Every learning outcome is assessed
+        critical: true
         guidance: >-
           Indicators: outcome -> task -> grade; no outcome without an instrument that checks it.
           Check: map outcomes to assessment forms; flag uncovered outcomes.
@@ -201,10 +207,12 @@ principles:
           Indicators: analysis -> essay, case; skills -> practical work; knowledge -> test, and so on.
           Check: use a "type of outcome -> type of assessment" matrix; flag mismatches.
       - name: All assessment tasks are listed and described
+        critical: true
         guidance: >-
           Indicators: every task is listed; no "hidden" forms of assessment.
           Check: find the "Assessment" / "Assessment criteria" section; extract the list of tasks.
       - name: It is clear what marks are given for and how
+        critical: true
         guidance: >-
           Indicators: assessment criteria are stated; requirements are described; weights are given.
           Check: look for words such as criteria, points, weight, percent; flag missing explanations of
@@ -284,6 +292,7 @@ principles:
     name: Course policy
     criteria:
       - name: Academic integrity rules are present
+        critical: true
         guidance: >-
           Indicators: rules on citation, use of artificial intelligence, plagiarism and independent work
           are stated; sanctions for violations are described.

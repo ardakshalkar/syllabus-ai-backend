@@ -466,6 +466,7 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     sa.func.count(Syllabus.id).filter(checked_status, Syllabus.issues > 0),
                     sa.func.count(Syllabus.id).filter(Syllabus.ai_status == AiStatus.cannot_check),
                     sa.func.count(Syllabus.id).filter(Syllabus.ai_status == AiStatus.processing),
+                    sa.func.count(Syllabus.id).filter(checked_status, Syllabus.critical_issues > 0),
                 )
                 .where(Syllabus.semester == semester, Syllabus.folder_id.is_not(None))
                 .group_by(Syllabus.folder_id)
@@ -502,14 +503,15 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
         Syllabus.drive_missing_at.is_(None),
     )
     results = {
-        school_id: (findings, unreadable, remaining)
-        for school_id, findings, unreadable, remaining in (
+        school_id: (findings, unreadable, remaining, critical)
+        for school_id, findings, unreadable, remaining, critical in (
             await session.execute(
                 sa.select(
                     Program.school_id,
                     sa.func.count(Syllabus.id).filter(checked_status, Syllabus.issues > 0),
                     sa.func.count(Syllabus.id).filter(Syllabus.ai_status == AiStatus.cannot_check),
                     sa.func.count(Syllabus.id).filter(waiting),
+                    sa.func.count(Syllabus.id).filter(checked_status, Syllabus.critical_issues > 0),
                 )
                 .join(Course, Course.program_id == Program.id)
                 .join(Syllabus, sa.and_(Syllabus.course_id == Course.id, Syllabus.semester == semester))
@@ -570,7 +572,7 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
         folders = []
         for f in by_school.get(school.id, []):
             found, checked, at_head, at_kok, approved = per_folder.get(f.id, zero)
-            with_findings, cannot_check, processing = ai_per_folder.get(f.id, (0, 0, 0))
+            with_findings, cannot_check, processing, with_critical = ai_per_folder.get(f.id, (0, 0, 0, 0))
             folders.append(
                 CollectionFolderOut(
                     folder_id=f.id,
@@ -591,6 +593,7 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     read_at=f.read_at,
                     read_error=f.read_error,
                     with_findings=with_findings,
+                    with_critical=with_critical,
                     cannot_check=cannot_check,
                     processing=processing,
                 )
@@ -609,9 +612,10 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                 approved=approved,
                 checking_total=checking_total,
                 checking_done=checking_done,
-                with_findings=results.get(school.id, (0, 0, 0))[0],
-                cannot_check=results.get(school.id, (0, 0, 0))[1],
-                remaining=results.get(school.id, (0, 0, 0))[2],
+                with_findings=results.get(school.id, (0, 0, 0, 0))[0],
+                with_critical=results.get(school.id, (0, 0, 0, 0))[3],
+                cannot_check=results.get(school.id, (0, 0, 0, 0))[1],
+                remaining=results.get(school.id, (0, 0, 0, 0))[2],
                 responsible=responsible.get(school.id, []),
                 checking_session_ids=sorted(running.get(school.id, set())),
             )

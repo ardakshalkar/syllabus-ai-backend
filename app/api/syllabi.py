@@ -10,7 +10,7 @@ from app.ai.extraction import ExtractionError
 from app.api.common import run_out, version_out
 from app.auth.rbac import ensure_can_check, ensure_can_view, ensure_course_lead, manages_school
 from app.deps import CurrentUser, DbSession
-from app.enums import AiStatus, ApprovalStage, RunStatus, Trigger, VersionSource
+from app.enums import AiStatus, ApprovalStage, RunStatus, Severity, Trigger, VersionSource, severity
 from app.models import AssessmentRun, SyllabusVersion, UploadFolder
 from app.schemas.common import Page
 from app.schemas.syllabus import (
@@ -189,11 +189,18 @@ async def _results(session: DbSession, run: AssessmentRun) -> RunResultsOut:
     out.technical = doc.technical
     out.results = [
         CriterionResultOut(
-            **r.model_dump(), name=specs[r.criterion_id].name, principle=specs[r.criterion_id].principle
+            **r.model_dump(),
+            name=specs[r.criterion_id].name,
+            principle=specs[r.criterion_id].principle,
+            critical=specs[r.criterion_id].critical,
+            severity=severity(r.status, specs[r.criterion_id].critical),
         )
         for r in doc.results
     ]
-    out.issues = sum(1 for r in doc.results if r.status in ("Partially compliant", "Not compliant"))
+    out.issues = sum(1 for r in out.results if r.severity)
+    out.critical_issues = sum(1 for r in out.results if r.severity == Severity.critical)
+    out.major_issues = sum(1 for r in out.results if r.severity == Severity.major)
+    out.minor_issues = sum(1 for r in out.results if r.severity == Severity.minor)
     return out
 
 

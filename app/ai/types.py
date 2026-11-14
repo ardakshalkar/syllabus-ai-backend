@@ -45,6 +45,7 @@ class CriterionSpec(BaseModel):
     required_context: str | None = None
     rule: str | None = None
     guidance: str | None = None
+    critical: bool = False
 
 
 class TechnicalIssue(BaseModel):

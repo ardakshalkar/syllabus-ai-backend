@@ -165,6 +165,9 @@ class CollectionFolderOut(Schema):
     )
     read_error: str | None = Field(default=None, description="why that read failed; None when it was read")
     with_findings: int = Field(default=0, description="its checked syllabi with at least one finding")
+    with_critical: int = Field(
+        default=0, description="its checked syllabi with at least one critical finding"
+    )
     cannot_check: int = Field(default=0, description="its syllabi the AI could not read")
     processing: int = Field(default=0, description="its syllabi the AI is checking right now")
 
@@ -188,6 +191,8 @@ class FolderFileOut(Schema):
     syllabus_id: uuid.UUID | None = Field(description="None: the app has not read this file yet")
     ai_status: AiStatus | None
     issues: int | None
+    critical_issues: int | None = Field(default=None, description="of its issues, how many are critical")
+    major_issues: int | None = Field(default=None, description="of its issues, how many are major")
 
 
 class CourseFolderOut(Schema):
@@ -254,6 +259,7 @@ class CollectionSchoolOut(Schema):
     checking_total: int = Field(description="its syllabi in a checking session running now")
     checking_done: int = Field(description="of those, how many the session has finished")
     with_findings: int = Field(default=0, description="checked syllabi with at least one issue")
+    with_critical: int = Field(default=0, description="checked syllabi with at least one critical finding")
     cannot_check: int = Field(default=0, description="syllabi the AI could not read")
     remaining: int = Field(
         default=0,

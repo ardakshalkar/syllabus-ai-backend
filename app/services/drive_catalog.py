@@ -279,6 +279,8 @@ async def folder_contents(
                 "syllabus_id": s.id if s else None,
                 "ai_status": s.ai_status if s else None,
                 "issues": s.issues if s else None,
+                "critical_issues": s.critical_issues if s else None,
+                "major_issues": s.major_issues if s else None,
             }
         )
     return {
@@ -340,6 +342,8 @@ async def add_drive_version(
     previous_stage = syllabus.approval_stage
     syllabus.current_version = number
     syllabus.issues = None
+    syllabus.critical_issues = None
+    syllabus.major_issues = None
     syllabus.ai_status = AiStatus.not_checked
     syllabus.approval_stage = ApprovalStage.draft
     syllabus.drive_missing_at = None
