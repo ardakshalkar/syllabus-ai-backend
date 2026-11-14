@@ -178,6 +178,11 @@ class CollectionFolderOut(Schema):
         description="how many of its syllabi that last check covered: those the same checking session finished, "
         "or 1 for a single syllabus checked on its own",
     )
+    check_count: int = Field(
+        default=0,
+        description="how many AI checks its syllabi have had in all: each checking session once, "
+        "each syllabus checked on its own once",
+    )
 
 
 class ResponsibleOut(Schema):

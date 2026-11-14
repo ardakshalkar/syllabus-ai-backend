@@ -479,6 +479,9 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
     # syllabus checked on its own has no session and counts alone. Newest first, so the first seen is the last.
     last_check: dict[uuid.UUID, tuple[datetime, int]] = {}
     last_session: dict[uuid.UUID, uuid.UUID | None] = {}
+    # And how many checks the folder has had in all: each checking session once, each syllabus checked alone once.
+    sessions_seen: dict[uuid.UUID, set[uuid.UUID]] = {}
+    check_count: dict[uuid.UUID, int] = {}
     for folder_id, session_id, completed_at in (
         await session.execute(
             sa.select(Syllabus.folder_id, AssessmentRun.session_id, AssessmentRun.completed_at)
@@ -493,6 +496,11 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
             .order_by(AssessmentRun.completed_at.desc())
         )
     ).all():
+        seen_sessions = sessions_seen.setdefault(folder_id, set())
+        if session_id is None or session_id not in seen_sessions:
+            check_count[folder_id] = check_count.get(folder_id, 0) + 1
+            if session_id is not None:
+                seen_sessions.add(session_id)
         if folder_id not in last_check:
             last_check[folder_id] = (completed_at, 0)
             last_session[folder_id] = session_id
@@ -626,6 +634,7 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     processing=processing,
                     last_checked_at=last_check.get(f.id, (None, 0))[0],
                     last_checked_count=last_check.get(f.id, (None, 0))[1],
+                    check_count=check_count.get(f.id, 0),
                 )
             )
         found, checked, at_head, at_kok, approved = per_school.get(school.id, zero)
