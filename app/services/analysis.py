@@ -245,6 +245,8 @@ async def report(
                             "evidence": res.evidence,
                             "explanation": res.explanation,
                             "recommendation": res.recommendation,
+                            "translations": res.translations,
+                            "texts": spec.texts,
                         }
                     )
                 findings.sort(key=lambda f: (rank[f["severity"]], _order(f["criterion_id"])))

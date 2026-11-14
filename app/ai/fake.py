@@ -210,6 +210,20 @@ class FakeProvider:
         if purpose == "proposals":
             items = [_propose(r, meta["content"]) for r in meta["failing"]]
             return {"proposals": [i for i in items if i]}
+        if purpose == "translate":
+            # Marks each text with its target language, so tests tell a translation from the original.
+            return {
+                "items": [
+                    {
+                        "criterion_id": item["criterion_id"],
+                        **{
+                            lang: {k: f"[{lang}] {v}" if v else "" for k, v in item["text"].items()}
+                            for lang in meta["targets"]
+                        },
+                    }
+                    for item in meta["items"]
+                ]
+            }
         raise ValueError(f"fake provider has no behaviour for '{purpose}'")
 
     async def complete_text(

@@ -7,6 +7,33 @@ from pydantic import BaseModel, Field
 
 from app.enums import EvaluationType, ResultStatus
 
+# The languages the app is read in. A text in all of them is a {code: text} dict.
+LANGUAGES = ("en", "ru", "kk")
+LANGUAGE_NAMES = {"en": "English", "ru": "Russian", "kk": "Kazakh"}
+LocalizedText = dict[str, str]
+
+
+def language_code(name: str) -> str:
+    """The code of a language named in settings (LLM_OUTPUT_LANGUAGE=English), or the code itself."""
+    lowered = name.strip().lower()
+    for code, full in LANGUAGE_NAMES.items():
+        if lowered in (code, full.lower()):
+            return code
+    return lowered
+
+
+class CriterionTexts(BaseModel):
+    """What a finding on a criterion means and how to fix it, written once by people in every language.
+    Shown above the AI's explanation and recommendation for the particular syllabus."""
+
+    problem: LocalizedText
+    fix: LocalizedText
+
+
+class ResultText(BaseModel):
+    explanation: str = ""
+    recommendation: str = ""
+
 
 class Outcome(BaseModel):
     code: str
@@ -46,6 +73,7 @@ class CriterionSpec(BaseModel):
     rule: str | None = None
     guidance: str | None = None
     critical: bool = False
+    texts: CriterionTexts | None = None
 
 
 class TechnicalIssue(BaseModel):
@@ -69,6 +97,10 @@ class CriterionResultData(BaseModel):
     required_context: str | None = None
     confidence: float | None = None
     evidence_verified: bool | None = None
+    # The language explanation and recommendation are written in, and their translations into the other
+    # languages of the app, keyed by language code. Results stored before translation have neither.
+    language: str | None = None
+    translations: dict[str, ResultText] = Field(default_factory=dict)
 
 
 class EvaluationOutput(BaseModel):
