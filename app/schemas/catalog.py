@@ -170,6 +170,14 @@ class CollectionFolderOut(Schema):
     )
     cannot_check: int = Field(default=0, description="its syllabi the AI could not read")
     processing: int = Field(default=0, description="its syllabi the AI is checking right now")
+    last_checked_at: datetime | None = Field(
+        default=None, description="when the AI last finished checking one of its syllabi; None if never"
+    )
+    last_checked_count: int = Field(
+        default=0,
+        description="how many of its syllabi that last check covered: those the same checking session finished, "
+        "or 1 for a single syllabus checked on its own",
+    )
 
 
 class ResponsibleOut(Schema):

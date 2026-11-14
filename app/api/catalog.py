@@ -9,9 +9,10 @@ from fastapi import APIRouter, HTTPException, status
 from app.auth.rbac import forbidden, manages_school
 from app.config import get_settings
 from app.deps import CurrentUser, DbSession
-from app.enums import AiStatus, ApprovalStage, Role, SessionItemStatus, SessionStatus
+from app.enums import AiStatus, ApprovalStage, Role, RunStatus, SessionItemStatus, SessionStatus
 from app.library.config import get_library_config
 from app.models import (
+    AssessmentRun,
     CheckSession,
     Course,
     Program,
@@ -473,6 +474,33 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
             )
         ).all()
     }
+    # Per folder: the AI's last finished check and how many of its syllabi that check took. A check is one
+    # checking session (one press of "Check"), so its count is the folder's syllabi that session finished; a
+    # syllabus checked on its own has no session and counts alone. Newest first, so the first seen is the last.
+    last_check: dict[uuid.UUID, tuple[datetime, int]] = {}
+    last_session: dict[uuid.UUID, uuid.UUID | None] = {}
+    for folder_id, session_id, completed_at in (
+        await session.execute(
+            sa.select(Syllabus.folder_id, AssessmentRun.session_id, AssessmentRun.completed_at)
+            .join(SyllabusVersion, SyllabusVersion.id == AssessmentRun.version_id)
+            .join(Syllabus, Syllabus.id == SyllabusVersion.syllabus_id)
+            .where(
+                AssessmentRun.status == RunStatus.completed,
+                AssessmentRun.completed_at.is_not(None),
+                Syllabus.semester == semester,
+                Syllabus.folder_id.is_not(None),
+            )
+            .order_by(AssessmentRun.completed_at.desc())
+        )
+    ).all():
+        if folder_id not in last_check:
+            last_check[folder_id] = (completed_at, 0)
+            last_session[folder_id] = session_id
+        if session_id is not None and session_id == last_session[folder_id]:
+            seen = last_check[folder_id]
+            last_check[folder_id] = (seen[0], seen[1] + 1)
+        elif session_id is None and last_session[folder_id] is None and last_check[folder_id][1] == 0:
+            last_check[folder_id] = (completed_at, 1)
     synced = dict(
         (
             await session.execute(
@@ -596,6 +624,8 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     with_critical=with_critical,
                     cannot_check=cannot_check,
                     processing=processing,
+                    last_checked_at=last_check.get(f.id, (None, 0))[0],
+                    last_checked_count=last_check.get(f.id, (None, 0))[1],
                 )
             )
         found, checked, at_head, at_kok, approved = per_school.get(school.id, zero)
