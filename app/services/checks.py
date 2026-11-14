@@ -15,6 +15,7 @@ from app.ai.types import EvaluationOutput, ExtractedContent
 from app.db.pg import session_scope
 from app.documents import AssessmentResultDoc, ExtractedDocument
 from app.enums import AiStatus, ApprovalStage, CheckKind, RunStatus, SessionItemStatus, SessionStatus, Trigger
+from app.library import lookup as library
 from app.models import (
     ApprovalEvent,
     AssessmentRun,
@@ -95,6 +96,15 @@ async def _context_for(session: AsyncSession, syllabus: Syllabus) -> dict[str, s
     return {"Educational Program Passport": passport} if passport else {}
 
 
+async def literature_in_library(content: ExtractedContent) -> library.LibraryReport | None:
+    """The library lookup never fails a check: if it breaks, the criterion is simply "Cannot verify"."""
+    try:
+        return await library.check_literature(content)
+    except Exception:
+        log.exception("library lookup failed")
+        return None
+
+
 class RunCancelled(Exception):
     """The run stopped being Processing while it was evaluated (its session was deleted or cancelled)."""
 
@@ -160,6 +170,7 @@ async def execute_run(run_id: uuid.UUID) -> None:
         try:
             version = await drive_catalog.follow_drive(run_id, version)
             content = await load_content(version)
+            library_report = await literature_in_library(content) if CheckKind.library in checks else None
             output = await pipeline.evaluate(
                 content,
                 rubric.specs,
@@ -168,6 +179,7 @@ async def execute_run(run_id: uuid.UUID) -> None:
                 context=context,
                 run_id=run_id,
                 on_phase=on_phase,
+                library_report=library_report,
             )
         except RunCancelled:
             log.info("check run %s cancelled", run_id)

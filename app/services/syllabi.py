@@ -175,6 +175,7 @@ class SyllabusFilters:
     discipline: str | None = None
     # Syllabi whose file left Google Drive are hidden unless asked for.
     include_missing: bool = False
+    folder_id: uuid.UUID | None = None
 
 
 def syllabus_rows_query(principal: Principal) -> sa.Select:
@@ -244,6 +245,8 @@ def apply_filters(query: sa.Select, f: SyllabusFilters, principal: Principal) ->
         query = query.where(Course.lead_id == principal.id)
     if f.discipline:
         query = query.where(Course.discipline == f.discipline)
+    if f.folder_id:
+        query = query.where(Syllabus.folder_id == f.folder_id)
     if not f.include_missing:
         query = query.where(Syllabus.drive_missing_at.is_(None))
     return query

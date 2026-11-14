@@ -89,6 +89,8 @@ class IntegrationsOut(Schema):
     drive: str
     email: str
     llm: str
+    # megapro_opac, megapro_api or off (integrations/library.yaml)
+    library: str = "off"
 
 
 class CriterionOut(Schema):
@@ -162,6 +164,9 @@ class CollectionFolderOut(Schema):
         default=None, description="when the app last tried to read it from Drive"
     )
     read_error: str | None = Field(default=None, description="why that read failed; None when it was read")
+    with_findings: int = Field(default=0, description="its checked syllabi with at least one finding")
+    cannot_check: int = Field(default=0, description="its syllabi the AI could not read")
+    processing: int = Field(default=0, description="its syllabi the AI is checking right now")
 
 
 class ResponsibleOut(Schema):

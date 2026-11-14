@@ -21,6 +21,7 @@ from app.ai.types import (
 )
 from app.config import get_settings
 from app.enums import CheckKind, EvaluationType, ResultStatus
+from app.library import lookup as library
 
 ALL_CHECKS = frozenset(CheckKind)
 
@@ -108,10 +109,13 @@ async def evaluate(
     trace: bool = True,
     on_phase: Phase = _noop,
     decider: "DecisionMaker | None | object" = _FROM_SETTINGS,
+    library_report: library.LibraryReport | None = None,
 ) -> EvaluationOutput:
     """With a decision model (`decider`), it gives every criterion its status in one request and the chat model
     (`llm`) only writes evidence, explanation and recommendation for those that are not Compliant. Without one,
-    the chat model does both, one request per principle."""
+    the chat model does both, one request per principle.
+
+    `library_report` (library.check_literature) decides the library criterion by rule, without a model."""
     settings = get_settings()
     context = context or {}
     dm = cast("DecisionMaker | None", get_decider() if decider is _FROM_SETTINGS else decider)
@@ -129,7 +133,9 @@ async def evaluate(
         elif spec.evaluation_type == EvaluationType.external_context:
             assert spec.required_context
             enabled = CONTEXT_CHECK.get(spec.required_context) in checks
-            if enabled and context.get(spec.required_context):
+            if enabled and spec.required_context == library.CONTEXT and library_report is not None:
+                results[spec.code] = library.criterion_result(spec, library_report)
+            elif enabled and context.get(spec.required_context):
                 to_llm.append(spec)
             else:
                 results[spec.code] = _cannot_verify(spec, f"the {spec.required_context} is unavailable")

@@ -48,6 +48,7 @@ async def list_syllabi(
     q: str | None = None,
     mine: bool = Query(False, description="Only courses the current user leads"),
     discipline: str | None = Query(None, description="Drive discipline folder"),
+    folder_id: uuid.UUID | None = Query(None, description="Only syllabi that arrived through this School folder"),
     include_missing: bool = Query(False, description="Also syllabi whose file left Google Drive"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -64,6 +65,7 @@ async def list_syllabi(
         mine,
         discipline,
         include_missing,
+        folder_id,
     )
     items, total = await syllabi.list_syllabi(session, principal, filters, limit=limit, offset=offset)
     return Page(items=items, total=total, limit=limit, offset=offset)

@@ -10,6 +10,7 @@ from app.auth.rbac import forbidden, manages_school
 from app.config import get_settings
 from app.deps import CurrentUser, DbSession
 from app.enums import AiStatus, ApprovalStage, Role, SessionItemStatus, SessionStatus
+from app.library.config import get_library_config
 from app.models import (
     CheckSession,
     Course,
@@ -47,7 +48,7 @@ from app.schemas.catalog import (
 from app.services import drive_admin, drive_catalog
 from app.services.sessions import ensure_can_manage
 from app.storage import drive, drive_config
-from app.storage.drive import explain_error, share_hint
+from app.storage.drive import GONE_HINT, explain_folder_error, folder_exists, share_hint
 
 router = APIRouter(tags=["catalog"])
 
@@ -198,6 +199,7 @@ async def integrations(_: CurrentUser) -> IntegrationsOut:
         drive=(await drive_config.refresh()).provider,  # stub or google
         email=s.email_backend,
         llm=s.llm_provider,
+        library=get_library_config().provider,
     )
 
 
@@ -256,7 +258,10 @@ async def _checked_drive_folder(drive_folder_id: str | None) -> str | None:
     folder_id = drive_folder_id_from(cleaned)
     await drive_config.refresh()
     if not await asyncio.to_thread(drive.get_drive().folder_accessible, folder_id):
-        # Much the commonest cause is a folder that was never shared, which otherwise reads as an empty one.
+        # Much the commonest cause is a folder that was never shared, which otherwise reads as an empty one;
+        # the other is a link to a folder that no longer exists, which sharing would not fix.
+        if await asyncio.to_thread(folder_exists, folder_id) is False:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, GONE_HINT)
         account = (await drive_admin.status()).get("client_email")
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, share_hint(account))
     return folder_id
@@ -324,7 +329,8 @@ async def folder_contents(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     except Exception as exc:
         account = (await drive_admin.status()).get("client_email")
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, explain_error(exc, account)) from exc
+        message = await explain_folder_error(exc, account, folder.drive_folder_id)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, message) from exc
 
 
 @router.post("/folders/{folder_id}/read", response_model=FolderReadOut)
@@ -450,6 +456,22 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
             )
         ).all()
     }
+    # Per folder: what the AI made of its syllabi, and how many it is checking right now.
+    ai_per_folder = {
+        row[0]: tuple(row[1:])
+        for row in (
+            await session.execute(
+                sa.select(
+                    Syllabus.folder_id,
+                    sa.func.count(Syllabus.id).filter(checked_status, Syllabus.issues > 0),
+                    sa.func.count(Syllabus.id).filter(Syllabus.ai_status == AiStatus.cannot_check),
+                    sa.func.count(Syllabus.id).filter(Syllabus.ai_status == AiStatus.processing),
+                )
+                .where(Syllabus.semester == semester, Syllabus.folder_id.is_not(None))
+                .group_by(Syllabus.folder_id)
+            )
+        ).all()
+    }
     synced = dict(
         (
             await session.execute(
@@ -548,6 +570,7 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
         folders = []
         for f in by_school.get(school.id, []):
             found, checked, at_head, at_kok, approved = per_folder.get(f.id, zero)
+            with_findings, cannot_check, processing = ai_per_folder.get(f.id, (0, 0, 0))
             folders.append(
                 CollectionFolderOut(
                     folder_id=f.id,
@@ -567,6 +590,9 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
                     last_synced_at=synced.get(f.id),
                     read_at=f.read_at,
                     read_error=f.read_error,
+                    with_findings=with_findings,
+                    cannot_check=cannot_check,
+                    processing=processing,
                 )
             )
         found, checked, at_head, at_kok, approved = per_school.get(school.id, zero)

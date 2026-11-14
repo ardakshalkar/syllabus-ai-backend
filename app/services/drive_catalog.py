@@ -45,7 +45,7 @@ from app.models import (
     UploadFolder,
 )
 from app.storage import cache, drive_config
-from app.storage.drive import DriveClient, DriveEntry, explain_error, get_drive, nfc
+from app.storage.drive import DriveClient, DriveEntry, explain_error, explain_folder_error, get_drive, nfc
 
 log = logging.getLogger(__name__)
 
@@ -475,7 +475,8 @@ async def sync_folder(folder_id: uuid.UUID, *, reuse_listing_s: float = 0) -> Sy
             log.exception("Drive sync of folder %s failed", folder_id)
             from app.services import drive_admin
 
-            report.error = explain_error(exc, (await drive_admin.status()).get("client_email"))
+            account = (await drive_admin.status()).get("client_email")
+            report.error = await explain_folder_error(exc, account, root)
     async with session_scope() as session:
         folder = await session.get(UploadFolder, folder_id)
         if folder is not None:
