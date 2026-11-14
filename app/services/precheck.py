@@ -103,6 +103,8 @@ async def run_job(job_id: str) -> bool:
             run_progress.apply(live, progress)
             await _update(job_id, phase=progress.phase, live=live)
 
+        from app.services.checks import literature_in_library
+
         output = await pipeline.evaluate(
             content,
             rubric.specs,
@@ -110,6 +112,7 @@ async def run_job(job_id: str) -> bool:
             context={"Educational Program Passport": passport} if passport else {},
             trace=False,
             on_phase=on_phase,
+            library_report=await literature_in_library(content),
         )
         await run_progress.record_pace(live)
         await _update(

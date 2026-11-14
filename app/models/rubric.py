@@ -47,3 +47,6 @@ class Criterion(UUIDPk, Base):
     required_context: Mapped[str | None] = mapped_column(sa.String(200))
     rule: Mapped[str | None] = mapped_column(sa.String(60))
     guidance: Mapped[str | None] = mapped_column(sa.Text)
+    # A finding on this criterion is critical. Only how results are reported depends on it, never how a
+    # syllabus is checked, so it may change on an imported version (`app.cli set-critical`).
+    critical: Mapped[bool] = mapped_column(default=False, server_default=sa.false())

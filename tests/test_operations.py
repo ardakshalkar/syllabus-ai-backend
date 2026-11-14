@@ -71,7 +71,14 @@ async def test_university_session(ref, client_for):
     assert created.status_code == 201, created.text
     body = created.json()
     assert body["status"] == "Completed"
-    assert body["progress"] == {"total": 3, "done": 3, "failed": 0, "completed": 3, "pending": 0}
+    assert body["progress"] == {
+        "total": 3,
+        "done": 3,
+        "failed": 0,
+        "cancelled": 0,
+        "completed": 3,
+        "pending": 0,
+    }
     items = (await provost.get(f"/sessions/{body['id']}/items")).json()
     assert sorted(i["issues"] for i in items) == [0, 6, 6]
     assert any("completed" in n["title"] for n in (await provost.get("/notifications")).json())

@@ -23,6 +23,9 @@ class Syllabus(UUIDPk, CreatedAt, Base):
         str_enum(ApprovalStage), default=ApprovalStage.draft
     )
     issues: Mapped[int | None]
+    # Of `issues`, how many are critical and how many major (app.enums.severity); the rest are minor.
+    critical_issues: Mapped[int | None]
+    major_issues: Mapped[int | None]
     folder_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("upload_folders.id"))
     # Set when the syllabus's file is no longer in its School's Drive folder; its results are kept.
     drive_missing_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

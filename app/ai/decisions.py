@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from app.ai.checks.criteria import CANNOT_VERIFY_RULE, MISSING_RULE
 from app.ai.llm import LLMError, _save_trace
 from app.ai.types import CriterionSpec
 from app.config import get_settings
@@ -56,7 +57,7 @@ def build_questions(specs: list[CriterionSpec]) -> dict[str, Any]:
         text += (
             "\nJudge whether the syllabus in the state meets this criterion. Compliant: clearly satisfied. "
             "Partially compliant: addressed, but incompletely or ambiguously. Not compliant: missing or "
-            "contradicted. Cannot verify: only when the syllabus text alone cannot decide it."
+            f"contradicted. {MISSING_RULE} Cannot verify: {CANNOT_VERIFY_RULE}"
         )
         questions[question_id(spec.code)] = {
             "type": "choice",

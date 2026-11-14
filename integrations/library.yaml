@@ -1,0 +1,50 @@
+# Narxoz Scientific Library (MegaPro) — how the "Core literature is held in the university's Scientific
+# Library" criterion looks up a syllabus's literature. Read by app/library/config.py.
+# ${NAME} is replaced by the environment variable NAME (the backend .env), so secrets never live here.
+#
+# The criterion itself stays in the rubric as it is:
+#   evaluation_type: external
+#   required_context: Narxoz library catalogue
+# The session checkbox "Library verification" turns the lookup on.
+
+library:
+  # megapro_opac: the public web catalogue, anonymous and read-only. Works today.
+  # megapro_api:  MegaPro's JSON API (/MegaPro/api?Method=GetRecords&DbId=...). Needs the DbId (and any key)
+  #               from the library's MegaPro administrator; not usable until then.
+  # off:          no lookup; the criterion returns "Cannot verify".
+  provider: megapro_opac
+  base_url: https://megapro.narxoz.kz/MegaPro
+
+  # The server sends its certificate without the Sectigo intermediate, so strict TLS clients (Python, curl)
+  # reject it while browsers repair the chain themselves. This adds that public intermediate to the trusted
+  # roots instead of switching verification off. Remove it once the library fixes the chain on its server.
+  extra_ca_file: integrations/certs/sectigo-public-server-ca-dv-r36.pem
+
+  megapro_opac:
+    # Searched in this order; the next one only when a reference is not found in the previous.
+    # 0 = Электронный каталог (print holdings), 1 = Полный текст книг (e-books).
+    databases: [0, 1]
+
+  megapro_api:
+    db_id: ${MEGAPRO_DB_ID}
+    api_key: ${MEGAPRO_API_KEY}
+
+  lookup:
+    max_references: 15          # per syllabus; the rest are reported as not checked
+    stem_length: 6              # search words are cut to this many letters and matched as "starts with",
+                                # so Russian and Kazakh endings do not matter (экономики -> эконом)
+    title_match: 0.75           # share of the reference's title words a catalogue record must contain
+    record_match: 0.5           # and share of the record's title words the reference must contain, so a
+                                # longer, different book sharing two words is not taken for it
+
+  limits:
+    requests_per_second: 2      # it is the library's live server
+    timeout_s: 20
+    cache_ttl_hours: 168        # a reference looked up once is not looked up again for a week
+
+  # How the share of core titles held turns into the criterion's status. Core titles are those under an
+  # "Основная литература / Негізгі әдебиет / Core reading" heading; with no such heading, every title is core.
+  status:
+    compliant_at: 1.0           # every core title held
+    partial_at: 0.5             # at least half held; below that: Not compliant
+    count_electronic: true      # an e-version in the library counts as held

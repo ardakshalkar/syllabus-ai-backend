@@ -111,6 +111,9 @@ class Settings(BaseSettings):
 
     precheck_ttl_s: int = 3600
 
+    # Narxoz Scientific Library (MegaPro) lookup for the core-literature criterion. A missing file: no lookup.
+    library_config: Path = Path("integrations/library.yaml")
+
     email_backend: Literal["smtp", "console"] = "console"
     smtp_host: str = "localhost"
     smtp_port: int = 587

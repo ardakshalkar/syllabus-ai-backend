@@ -188,6 +188,46 @@ def share_hint(account: str | None) -> str:
     )
 
 
+GONE_HINT = (
+    "There is no Drive folder at this link: it was deleted, moved to the trash, or the link is wrong. "
+    "Change the link to the folder's current address."
+)
+
+
+def folder_exists(folder_id: str) -> bool | None:
+    """Whether Google has a folder with this id at all, asked without signing in.
+
+    Drive's API answers 404 both for a folder that does not exist and for one never shared with the app, so
+    the API alone cannot tell them apart. Its web page can: signed out, a folder that does not exist (or was
+    deleted) answers 404, while one that exists answers 200 when shared by link or sends you to sign in.
+    None when Google could not be asked."""
+    import httpx
+
+    try:
+        response = httpx.get(
+            f"https://drive.google.com/drive/folders/{folder_id}", timeout=5, follow_redirects=False
+        )
+    except httpx.HTTPError:
+        return None
+    return response.status_code != 404
+
+
+def not_found(exc: Exception) -> bool:
+    """Drive's API could not find the item: not shared with the app, or not there at all."""
+    from googleapiclient.errors import HttpError
+
+    return isinstance(exc, HttpError) and exc.resp.status == 404
+
+
+async def explain_folder_error(exc: Exception, account: str | None, folder_id: str | None) -> str:
+    """explain_error for reading a School folder, which also says when the folder no longer exists."""
+    import asyncio
+
+    if folder_id and not_found(exc) and await asyncio.to_thread(folder_exists, folder_id) is False:
+        return GONE_HINT
+    return explain_error(exc, account)
+
+
 def explain_error(exc: Exception, account: str | None = None) -> str:
     """A Drive failure in words someone can act on; stored on the version and shown on the Drive screen.
 

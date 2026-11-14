@@ -30,6 +30,16 @@ async def _import_rubric(path: Path, activate: bool) -> None:
         print(f"imported rubric {rubric.code} (active={rubric.is_active})")
 
 
+async def _set_critical(path: Path) -> None:
+    from app.services.checks import recount_severity
+    from app.services.rubric import set_critical
+
+    async with pg.session_scope() as session:
+        flagged = await set_critical(session, path)
+        recounted = await recount_severity(session)
+        print(f"critical criteria: {', '.join(flagged) or 'none'}; recounted {recounted} syllabi")
+
+
 async def _seed() -> None:
     from seed.demo import run
 
@@ -271,6 +281,8 @@ async def _main(args: argparse.Namespace) -> None:
     try:
         if args.command == "import-rubric":
             await _import_rubric(Path(args.path), not args.no_activate)
+        elif args.command == "set-critical":
+            await _set_critical(Path(args.path))
         elif args.command == "seed":
             await _seed()
         elif args.command == "drive-setup":
@@ -304,6 +316,11 @@ def main() -> None:
     rubric.add_argument(
         "--no-activate", action="store_true", help="import without making it the active rubric"
     )
+    critical = sub.add_parser(
+        "set-critical",
+        help="copy a rubric YAML's `critical` flags onto its imported version and recount syllabi's findings",
+    )
+    critical.add_argument("path")
     sub.add_parser("seed", help="load the prototype demo data and run its checks")
     sub.add_parser("create-db", help="create the PostgreSQL database in DATABASE_URL if it is missing")
     setup = sub.add_parser(

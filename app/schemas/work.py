@@ -36,6 +36,8 @@ class SessionProgress(Schema):
     total: int
     done: int
     failed: int
+    # Files the session never checked because it was cancelled; neither completed nor pending.
+    cancelled: int = 0
     completed: int
     pending: int
 
@@ -216,7 +218,11 @@ class HeatmapOut(Schema):
 class FrequentIssue(Schema):
     criterion_id: str
     name: str
-    syllabi: int
+    principle: int
+    principle_name: str
+    critical: bool = Field(description="the rubric marks this criterion critical")
+    syllabi: int = Field(description="syllabi with this finding, either status")
+    not_compliant: int = Field(description="of those, how many are Not compliant; the rest are Partially")
     percent: int
 
 

@@ -63,6 +63,14 @@ async def delete(session_id: uuid.UUID, principal: CurrentUser, session: DbSessi
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/sessions/{session_id}/cancel", response_model=SessionOut)
+async def cancel(session_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+    cs = await sessions.get_session_obj(session, principal, session_id)
+    await sessions.cancel(session, principal, cs)
+    await session.commit()
+    return await _out(session, cs)
+
+
 @router.post("/sessions/{session_id}/pause", response_model=SessionOut)
 async def pause(session_id: uuid.UUID, principal: CurrentUser, session: DbSession):
     cs = await sessions.get_session_obj(session, principal, session_id)

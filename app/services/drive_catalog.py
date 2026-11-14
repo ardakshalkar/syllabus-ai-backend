@@ -45,7 +45,7 @@ from app.models import (
     UploadFolder,
 )
 from app.storage import cache, drive_config
-from app.storage.drive import DriveClient, DriveEntry, explain_error, get_drive, nfc
+from app.storage.drive import DriveClient, DriveEntry, explain_error, explain_folder_error, get_drive, nfc
 
 log = logging.getLogger(__name__)
 
@@ -279,6 +279,8 @@ async def folder_contents(
                 "syllabus_id": s.id if s else None,
                 "ai_status": s.ai_status if s else None,
                 "issues": s.issues if s else None,
+                "critical_issues": s.critical_issues if s else None,
+                "major_issues": s.major_issues if s else None,
             }
         )
     return {
@@ -340,6 +342,8 @@ async def add_drive_version(
     previous_stage = syllabus.approval_stage
     syllabus.current_version = number
     syllabus.issues = None
+    syllabus.critical_issues = None
+    syllabus.major_issues = None
     syllabus.ai_status = AiStatus.not_checked
     syllabus.approval_stage = ApprovalStage.draft
     syllabus.drive_missing_at = None
@@ -475,7 +479,8 @@ async def sync_folder(folder_id: uuid.UUID, *, reuse_listing_s: float = 0) -> Sy
             log.exception("Drive sync of folder %s failed", folder_id)
             from app.services import drive_admin
 
-            report.error = explain_error(exc, (await drive_admin.status()).get("client_email"))
+            account = (await drive_admin.status()).get("client_email")
+            report.error = await explain_folder_error(exc, account, root)
     async with session_scope() as session:
         folder = await session.get(UploadFolder, folder_id)
         if folder is not None:

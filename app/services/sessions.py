@@ -35,7 +35,9 @@ from app.services.checks import create_run, refresh_ai_status
 from app.services.notifications import notify, users_with_role
 from app.workers import dispatch
 
-FINISHED = (SessionItemStatus.done, SessionItemStatus.failed)
+FINISHED = (SessionItemStatus.done, SessionItemStatus.failed, SessionItemStatus.cancelled)
+# A session in one of these has stopped for good: its runs no longer move it on.
+CLOSED = (SessionStatus.completed, SessionStatus.cancelled)
 
 
 def _now() -> datetime:
@@ -194,6 +196,47 @@ async def resume(session: AsyncSession, principal: Principal, cs: CheckSession) 
     )
 
 
+async def cancel(session: AsyncSession, principal: Principal, cs: CheckSession) -> None:
+    """Stop a session for good but keep it, with what it finished, in the list (unlike delete).
+
+    Its Queued and Processing runs become Cancelled; a worker still on one notices at its next phase and drops
+    its results (checks.execute_run). Finished runs keep their results.
+    """
+    ensure_can_manage(principal, await _scope_school(session, cs.scope_type, cs.scope_ref))
+    await session.execute(sa.select(CheckSession.id).where(CheckSession.id == cs.id).with_for_update())
+    if cs.status in CLOSED:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Session is already {cs.status.value}")
+    open_runs = (AssessmentRun.session_id == cs.id) & AssessmentRun.status.in_(
+        (RunStatus.queued, RunStatus.processing)
+    )
+    open_version_ids = list(await session.scalars(sa.select(AssessmentRun.version_id).where(open_runs)))
+    now = _now()
+    no_sync = {"synchronize_session": False}
+    await session.execute(
+        sa.update(AssessmentRun)
+        .where(open_runs)
+        .values(status=RunStatus.cancelled, error="Cancelled with its AI check", completed_at=now),
+        execution_options=no_sync,
+    )
+    await session.execute(
+        sa.update(SessionItem)
+        .where(SessionItem.session_id == cs.id, SessionItem.status.not_in(FINISHED))
+        .values(status=SessionItemStatus.cancelled, error="Cancelled with its AI check"),
+        execution_options=no_sync,
+    )
+    cs.status = SessionStatus.cancelled
+    cs.completed_at = now
+    if open_version_ids:
+        syllabi = await session.scalars(
+            sa.select(Syllabus)
+            .join(SyllabusVersion, SyllabusVersion.syllabus_id == Syllabus.id)
+            .where(SyllabusVersion.id.in_(open_version_ids))
+            .distinct()
+        )
+        for syllabus in syllabi:
+            await refresh_ai_status(session, syllabus)
+
+
 async def delete(session: AsyncSession, principal: Principal, cs: CheckSession) -> None:
     """Delete a session in any status, so its checks stop holding up the queue for newer sessions.
 
@@ -252,7 +295,7 @@ async def on_run_finished(session: AsyncSession, run: AssessmentRun, *, ok: bool
     cs = await session.scalar(
         sa.select(CheckSession).where(CheckSession.id == run.session_id).with_for_update()
     )
-    if cs is None or cs.status == SessionStatus.completed:
+    if cs is None or cs.status in CLOSED:
         return
     remaining = await session.scalar(
         sa.select(sa.func.count())
@@ -301,13 +344,15 @@ async def progress(session: AsyncSession, session_id: uuid.UUID) -> dict[str, in
     ).all()
     by_status = {s: n for s, n in rows}
     done, failed = by_status.get(SessionItemStatus.done, 0), by_status.get(SessionItemStatus.failed, 0)
+    cancelled = by_status.get(SessionItemStatus.cancelled, 0)
     total = sum(by_status.values())
     return {
         "total": total,
         "done": done,
         "failed": failed,
+        "cancelled": cancelled,
         "completed": done + failed,
-        "pending": total - done - failed,
+        "pending": total - done - failed - cancelled,
     }
 
 

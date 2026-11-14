@@ -168,6 +168,35 @@ async def test_deleting_a_session_frees_the_queue(ref, client_for):
     assert await _status(queued) is None
 
 
+async def test_cancelling_a_session_keeps_it_and_stops_its_open_runs(ref, client_for):
+    session_id, (done, running, queued) = await _session_with_queued_runs(ref, client_for)
+    await checks.execute_run(done)
+    await _set_status(running, RunStatus.processing)
+    professor = client_for(ref["users"]["shalkar"])
+    assert (await professor.post(f"/sessions/{session_id}/cancel")).status_code == 404
+    provost = client_for(ref["users"]["provost"])
+
+    response = await provost.post(f"/sessions/{session_id}/cancel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "Cancelled" and body["completed_at"]
+    assert body["progress"]["cancelled"] == 2
+    assert body["progress"]["pending"] == 0 and body["progress"]["done"] == 1
+    assert (await provost.post(f"/sessions/{session_id}/cancel")).status_code == 409
+    assert (await provost.post(f"/sessions/{session_id}/resume")).status_code == 409
+    async with pg.session_scope() as session:
+        assert (await session.get(CheckSession, session_id)).status == SessionStatus.cancelled
+        items = {i.run_id: i.status for i in await session.scalars(sa.select(SessionItem))}
+        assert items[done] == SessionItemStatus.done
+        assert items[running] == items[queued] == SessionItemStatus.cancelled
+    assert await _status(done) == RunStatus.completed
+    assert await _status(running) == await _status(queued) == RunStatus.cancelled
+    await checks.execute_run(queued)  # its task still in the broker leaves it alone
+    assert await _status(queued) == RunStatus.cancelled
+    assert await AssessmentResultDoc.find_one(AssessmentResultDoc.run_id == queued) is None
+
+
 async def test_single_checks_go_before_a_session_queue(ref, client_for):
     _, run_ids = await _session_with_queued_runs(ref, client_for)
     async with pg.session_scope() as session:

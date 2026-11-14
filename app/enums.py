@@ -51,6 +51,24 @@ class ResultStatus(StrEnum):
 ISSUE_STATUSES = (ResultStatus.partial, ResultStatus.not_compliant)
 
 
+class Severity(StrEnum):
+    """How bad a finding is. Any finding on a criterion the rubric marks critical is critical; otherwise
+    Not compliant is major and Partially compliant is minor."""
+
+    critical = "critical"
+    major = "major"
+    minor = "minor"
+
+
+def severity(status: ResultStatus | str, critical: bool) -> Severity | None:
+    """The severity of a criterion result; None when it is no finding (Compliant, Cannot verify)."""
+    if status not in ISSUE_STATUSES:
+        return None
+    if critical:
+        return Severity.critical
+    return Severity.major if status == ResultStatus.not_compliant else Severity.minor
+
+
 class EvaluationType(StrEnum):
     deterministic = "Deterministic"
     ai_semantic = "AI semantic"
@@ -69,6 +87,7 @@ class RunStatus(StrEnum):
     processing = "Processing"
     completed = "Completed"
     failed = "Failed"
+    cancelled = "Cancelled"
 
 
 class VersionSource(StrEnum):
@@ -92,6 +111,7 @@ class SessionStatus(StrEnum):
     running = "Running"
     paused = "Paused"
     completed = "Completed"
+    cancelled = "Cancelled"
 
 
 class SessionItemStatus(StrEnum):
@@ -99,6 +119,7 @@ class SessionItemStatus(StrEnum):
     processing = "Processing"
     done = "Done"
     failed = "Failed"
+    cancelled = "Cancelled"
 
 
 class CheckKind(StrEnum):

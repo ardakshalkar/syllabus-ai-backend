@@ -10,7 +10,7 @@ from app.ai.extraction import ExtractionError
 from app.api.common import run_out, version_out
 from app.auth.rbac import ensure_can_check, ensure_can_view, ensure_course_lead, manages_school
 from app.deps import CurrentUser, DbSession
-from app.enums import AiStatus, ApprovalStage, RunStatus, Trigger, VersionSource
+from app.enums import AiStatus, ApprovalStage, RunStatus, Severity, Trigger, VersionSource, severity
 from app.models import AssessmentRun, SyllabusVersion, UploadFolder
 from app.schemas.common import Page
 from app.schemas.syllabus import (
@@ -48,6 +48,7 @@ async def list_syllabi(
     q: str | None = None,
     mine: bool = Query(False, description="Only courses the current user leads"),
     discipline: str | None = Query(None, description="Drive discipline folder"),
+    folder_id: uuid.UUID | None = Query(None, description="Only syllabi that arrived through this School folder"),
     include_missing: bool = Query(False, description="Also syllabi whose file left Google Drive"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -64,6 +65,7 @@ async def list_syllabi(
         mine,
         discipline,
         include_missing,
+        folder_id,
     )
     items, total = await syllabi.list_syllabi(session, principal, filters, limit=limit, offset=offset)
     return Page(items=items, total=total, limit=limit, offset=offset)
@@ -187,11 +189,18 @@ async def _results(session: DbSession, run: AssessmentRun) -> RunResultsOut:
     out.technical = doc.technical
     out.results = [
         CriterionResultOut(
-            **r.model_dump(), name=specs[r.criterion_id].name, principle=specs[r.criterion_id].principle
+            **r.model_dump(),
+            name=specs[r.criterion_id].name,
+            principle=specs[r.criterion_id].principle,
+            critical=specs[r.criterion_id].critical,
+            severity=severity(r.status, specs[r.criterion_id].critical),
         )
         for r in doc.results
     ]
-    out.issues = sum(1 for r in doc.results if r.status in ("Partially compliant", "Not compliant"))
+    out.issues = sum(1 for r in out.results if r.severity)
+    out.critical_issues = sum(1 for r in out.results if r.severity == Severity.critical)
+    out.major_issues = sum(1 for r in out.results if r.severity == Severity.major)
+    out.minor_issues = sum(1 for r in out.results if r.severity == Severity.minor)
     return out
 
 

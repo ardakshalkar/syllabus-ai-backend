@@ -4,7 +4,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.ai.types import CriterionResultData, TechnicalReport
-from app.enums import AiStatus, ApprovalStage, CheckKind, RunStatus, Trigger, VersionSource
+from app.enums import AiStatus, ApprovalStage, CheckKind, RunStatus, Severity, Trigger, VersionSource
 from app.schemas.common import Schema
 
 
@@ -26,6 +26,8 @@ class SyllabusOut(Schema):
     ai_status: AiStatus
     approval_stage: ApprovalStage
     issues: int | None
+    critical_issues: int | None = Field(default=None, description="of its issues, how many are critical")
+    major_issues: int | None = Field(default=None, description="of its issues, how many are major")
     folder_path: str | None
     updated_at: datetime
     discipline: str | None = Field(
@@ -119,10 +121,15 @@ class RunOut(Schema):
 class CriterionResultOut(CriterionResultData):
     name: str
     principle: int
+    critical: bool = Field(default=False, description="the rubric marks this criterion critical")
+    severity: Severity | None = Field(default=None, description="None when the result is no finding")
 
 
 class RunResultsOut(RunOut):
     issues: int | None = None
+    critical_issues: int | None = None
+    major_issues: int | None = None
+    minor_issues: int | None = None
     technical: TechnicalReport | None = None
     results: list[CriterionResultOut] = Field(default_factory=list)
 
