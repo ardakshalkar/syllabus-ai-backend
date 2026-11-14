@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 180
     llm_max_retries: int = 3
     llm_output_language: str = "English"
+    # After a check, its explanations and recommendations are translated from LLM_OUTPUT_LANGUAGE into the
+    # app's other languages (English, Russian, Kazakh). TRANSLATION_MODEL names a model on the same server
+    # for that (e.g. a Gemini model on OpenRouter, stronger in Kazakh); empty: the chat model translates.
+    translation_model: str = ""
+    translate_results: bool = True
     # OpenRouter's key. LLM_PROVIDER=openrouter uses it when LLM_API_KEY is not set, and the decision model
     # always does, so one key in .env serves both.
     openrouter_api_key: str = ""

@@ -39,7 +39,7 @@ from app.models import (
     Syllabus,
     SyllabusVersion,
 )
-from app.services import drive_catalog, run_live, run_progress
+from app.services import drive_catalog, run_live, run_progress, translations
 from app.services.notifications import notify
 from app.services.rubric import load_rubric
 from app.storage import files
@@ -206,6 +206,8 @@ async def execute_run(run_id: uuid.UUID) -> None:
             log.exception("check run %s failed", run_id)
             await _fail(run_id, f"{type(exc).__name__}: {exc}", AiStatus.not_checked)
             return
+
+        output.results = await translations.translate(output.results, run_id)
 
         # Still under the lease, so recover_stale_runs cannot requeue the run between these writes.
         await AssessmentResultDoc.find(AssessmentResultDoc.run_id == run_id).delete()

@@ -40,6 +40,21 @@ async def _set_critical(path: Path) -> None:
         print(f"critical criteria: {', '.join(flagged) or 'none'}; recounted {recounted} syllabi")
 
 
+async def _set_texts(path: Path) -> None:
+    from app.services.rubric import set_texts
+
+    async with pg.session_scope() as session:
+        count = await set_texts(session, path)
+        print(f"finding texts set for {count} criteria")
+
+
+async def _translate_results(include_all: bool) -> None:
+    from app.services.translations import translate_stored_results
+
+    translated = await translate_stored_results(latest_only=not include_all)
+    print(f"translated the results of {translated} check run(s)")
+
+
 async def _seed() -> None:
     from seed.demo import run
 
@@ -283,6 +298,10 @@ async def _main(args: argparse.Namespace) -> None:
             await _import_rubric(Path(args.path), not args.no_activate)
         elif args.command == "set-critical":
             await _set_critical(Path(args.path))
+        elif args.command == "set-texts":
+            await _set_texts(Path(args.path))
+        elif args.command == "translate-results":
+            await _translate_results(args.all)
         elif args.command == "seed":
             await _seed()
         elif args.command == "drive-setup":
@@ -321,6 +340,18 @@ def main() -> None:
         help="copy a rubric YAML's `critical` flags onto its imported version and recount syllabi's findings",
     )
     critical.add_argument("path")
+    texts = sub.add_parser(
+        "set-texts",
+        help="copy a finding texts file (rubric/<code>.texts.yaml) onto its imported rubric version",
+    )
+    texts.add_argument("path")
+    translate = sub.add_parser(
+        "translate-results",
+        help="translate stored check results that have no translations yet into the app's other languages",
+    )
+    translate.add_argument(
+        "--all", action="store_true", help="every completed run, not only each syllabus version's latest"
+    )
     sub.add_parser("seed", help="load the prototype demo data and run its checks")
     sub.add_parser("create-db", help="create the PostgreSQL database in DATABASE_URL if it is missing")
     setup = sub.add_parser(

@@ -8,7 +8,7 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.types import CriterionSpec
+from app.ai.types import LANGUAGES, CriterionSpec, CriterionTexts
 from app.enums import EvaluationType
 from app.models import Criterion, Principle, RubricVersion
 
@@ -48,6 +48,29 @@ class RubricFile(BaseModel):
     principles: list[_PrincipleIn]
 
 
+class _TextsFile(BaseModel):
+    rubric: str
+    criteria: dict[str, CriterionTexts]
+
+    @model_validator(mode="after")
+    def _every_language(self) -> "_TextsFile":
+        for code, texts in self.criteria.items():
+            for field in ("problem", "fix"):
+                missing = [lang for lang in LANGUAGES if not getattr(texts, field).get(lang, "").strip()]
+                if missing:
+                    raise ValueError(f"criterion {code}: `{field}` has no {', '.join(missing)} text")
+        return self
+
+
+def texts_path(rubric_path: Path) -> Path:
+    """rubric/2026.2.yaml keeps its finding texts in rubric/2026.2.texts.yaml."""
+    return rubric_path.with_name(f"{rubric_path.stem}.texts.yaml")
+
+
+def read_texts(path: Path) -> _TextsFile:
+    return _TextsFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))  # noqa: ASYNC240 (CLI only)
+
+
 class RubricExistsError(Exception):
     pass
 
@@ -62,6 +85,13 @@ async def import_rubric(session: AsyncSession, path: Path, *, activate: bool = T
         for c in p.criteria:
             if c.rule and c.rule not in RULES:
                 raise ValueError(f"unknown rule '{c.rule}' (known: {', '.join(sorted(RULES))})")
+
+    texts: dict[str, CriterionTexts] = {}
+    if texts_path(path).exists():
+        texts_file = read_texts(texts_path(path))
+        if texts_file.rubric != data.code:
+            raise ValueError(f"{texts_path(path).name} is for rubric {texts_file.rubric}, not {data.code}")
+        texts = texts_file.criteria
 
     rubric = RubricVersion(code=data.code, title=data.title, is_active=False)
     session.add(rubric)
@@ -83,6 +113,7 @@ async def import_rubric(session: AsyncSession, path: Path, *, activate: bool = T
                     required_context=c.required_context,
                     guidance=c.guidance,
                     critical=c.critical,
+                    texts=texts[f"{p.number}.{i}"].model_dump() if f"{p.number}.{i}" in texts else None,
                 )
             )
     await session.flush()
@@ -120,6 +151,25 @@ async def set_critical(session: AsyncSession, path: Path) -> list[str]:
     return flagged
 
 
+async def set_texts(session: AsyncSession, path: Path) -> int:
+    """Copy a texts file (rubric/<code>.texts.yaml) onto the rubric version imported under its code, and
+    return how many criteria have texts now. Criteria the file leaves out lose theirs."""
+    data = read_texts(path)
+    rubric = await session.scalar(select(RubricVersion).where(RubricVersion.code == data.rubric))
+    if rubric is None:
+        raise LookupError(
+            f"rubric {data.rubric} is not imported; run `python -m app.cli import-rubric` first"
+        )
+    criteria = {c.code: c for p in rubric.principles for c in p.criteria}
+    unknown = sorted(set(data.criteria) - set(criteria))
+    if unknown:
+        raise ValueError(f"rubric {data.rubric} has no criteria {', '.join(unknown)}")
+    for code, criterion in criteria.items():
+        criterion.texts = data.criteria[code].model_dump() if code in data.criteria else None
+    await session.flush()
+    return len(data.criteria)
+
+
 @dataclass
 class LoadedRubric:
     version: RubricVersion
@@ -153,6 +203,7 @@ async def load_rubric(session: AsyncSession, rubric_version_id: uuid.UUID | None
                     rule=c.rule,
                     guidance=c.guidance,
                     critical=c.critical,
+                    texts=CriterionTexts.model_validate(c.texts) if c.texts else None,
                 )
             )
     return LoadedRubric(rubric, specs, ids, {p.number: p.name for p in rubric.principles})
