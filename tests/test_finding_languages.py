@@ -34,10 +34,12 @@ def test_language_code():
     assert language_code("kk") == "kk"
 
 
-def test_texts_cover_every_criterion_of_the_rubric():
-    rubric = yaml.safe_load(RUBRIC.read_text(encoding="utf-8"))
+@pytest.mark.parametrize("code", ["2026.2", "2026.3"])
+def test_texts_cover_every_criterion_of_the_rubric(code):
+    path = RUBRIC.with_name(f"{code}.yaml")
+    rubric = yaml.safe_load(path.read_text(encoding="utf-8"))
     codes = {f"{p['number']}.{i}" for p in rubric["principles"] for i, _ in enumerate(p["criteria"], start=1)}
-    texts = read_texts(texts_path(RUBRIC))
+    texts = read_texts(texts_path(path))
     assert texts.rubric == rubric["code"]
     assert set(texts.criteria) == codes
 
