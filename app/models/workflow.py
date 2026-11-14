@@ -75,3 +75,18 @@ class Notification(UUIDPk, CreatedAt, Base):
     read_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     # Outbox for email: a beat task sends rows in "pending" and marks them "sent" or "failed".
     email_status: Mapped[str | None] = mapped_column(sa.String(10), index=True)
+
+
+class ReviewReport(UUIDPk, CreatedAt, Base):
+    """A generated review report (PDF) sent to the Provost Office: what it covered and where it went."""
+
+    __tablename__ = "review_reports"
+
+    semester: Mapped[str] = mapped_column(sa.String(40), index=True)
+    # None: the whole university.
+    school_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("schools.id", ondelete="CASCADE"))
+    include: Mapped[str] = mapped_column(sa.String(10))
+    courses: Mapped[int]
+    recipients: Mapped[list[str]] = mapped_column(sa.JSON, default=list)
+    filename: Mapped[str] = mapped_column(sa.String(200))
+    sent_by: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"))

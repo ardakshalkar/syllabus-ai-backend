@@ -121,6 +121,12 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_starttls: bool = True
     email_from: str = "syllabus-ai@narxoz.kz"
+    # Where a generated review report (PDF) is sent: the Provost Office's shared mailbox, comma-separated for
+    # several. Empty: every user holding the provost role.
+    provost_office_email: str = ""
+    # A folder holding the TrueType fonts the PDF report is set in (DejaVuSans.ttf and DejaVuSans-Bold.ttf, or
+    # arial.ttf and arialbd.ttf). Empty: the system's DejaVu (Linux) or Arial (Windows) is used.
+    report_font_dir: str = ""
 
     # External staff / employees API: GET /api/v1/staff/external/employees
     staff_api_base_url: str = "https://corp-portal.narxoz.kz"

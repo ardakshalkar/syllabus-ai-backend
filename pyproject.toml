@@ -26,6 +26,7 @@ dependencies = [
     "google-api-python-client>=2.140",
     "google-auth>=2.30",
     "pyjwt[crypto]>=2.9",
+    "fpdf2>=2.8",
 ]
 
 [dependency-groups]

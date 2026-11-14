@@ -3,7 +3,7 @@ from app.models.org import Course, Program, RoleAssignment, School, UploadFolder
 from app.models.rubric import Criterion, Principle, RubricVersion
 from app.models.semester import Semester
 from app.models.syllabus import AssessmentRun, CriterionOutcome, Syllabus, SyllabusVersion
-from app.models.workflow import ApprovalEvent, CheckSession, Notification, SessionItem
+from app.models.workflow import ApprovalEvent, CheckSession, Notification, ReviewReport, SessionItem
 
 __all__ = [
     "ApprovalEvent",
@@ -16,6 +16,7 @@ __all__ = [
     "Notification",
     "Principle",
     "Program",
+    "ReviewReport",
     "RoleAssignment",
     "RubricVersion",
     "School",

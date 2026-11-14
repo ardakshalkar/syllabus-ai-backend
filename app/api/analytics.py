@@ -7,9 +7,9 @@ from fastapi.responses import Response
 from app.auth.rbac import Principal, forbidden
 from app.deps import CurrentUser, DbSession
 from app.enums import Role
-from app.schemas.analysis import AnalysisOut, ReportOut
+from app.schemas.analysis import AnalysisOut, ReportOut, SendReportIn, SentReportOut
 from app.schemas.work import FrequentIssue, HeatmapOut, OverviewSchool, TriggerCount
-from app.services import analysis, analytics
+from app.services import analysis, analytics, review_report
 
 router = APIRouter(tags=["analytics"])
 
@@ -92,3 +92,48 @@ async def analysis_report(
         )
     except analysis.ReportTooLarge as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+
+def _report_errors(exc: Exception) -> HTTPException:
+    if isinstance(exc, analysis.ReportTooLarge):
+        return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+    return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+
+@router.get("/analysis/report.pdf")
+async def analysis_report_pdf(
+    semester: str,
+    principal: CurrentUser,
+    session: DbSession,
+    school_id: uuid.UUID | None = None,
+    include: Literal["summary", "critical", "all"] = "critical",
+):
+    """The same report as a PDF file."""
+    try:
+        _, pdf, name = await review_report.build(
+            session, _reviewer(principal), semester=semester, school_id=school_id, include=include
+        )
+    except (analysis.ReportTooLarge, review_report.NoFont) as exc:
+        raise _report_errors(exc) from exc
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.post("/analysis/report/send", response_model=SentReportOut, status_code=status.HTTP_201_CREATED)
+async def send_report(body: SendReportIn, principal: CurrentUser, session: DbSession):
+    """Generate the review report as a PDF and email it to the Provost Office."""
+    try:
+        await review_report.send(
+            session, _reviewer(principal), semester=body.semester, school_id=body.school_id, include=body.include
+        )
+    except (analysis.ReportTooLarge, review_report.NoFont, review_report.NoRecipient) as exc:
+        raise _report_errors(exc) from exc
+    except OSError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"The email could not be sent: {exc}") from exc
+    await session.commit()
+    return (await review_report.sent(session, principal, semester=body.semester))[0]
+
+
+@router.get("/analysis/report/sent", response_model=list[SentReportOut])
+async def sent_reports(semester: str, principal: CurrentUser, session: DbSession):
+    """Review reports already sent to the Provost Office this semester, newest first."""
+    return await review_report.sent(session, _reviewer(principal), semester=semester)

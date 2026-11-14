@@ -90,3 +90,22 @@ class ReportOut(AnalysisOut):
     generated_at: datetime
     attention: list[AttentionCourse] = Field(default_factory=list)
     courses: list[ReportCourse]
+
+
+class SendReportIn(Schema):
+    semester: str
+    school_id: uuid.UUID | None = None
+    include: Literal["summary", "critical", "all"] = "critical"
+
+
+class SentReportOut(Schema):
+    id: uuid.UUID
+    semester: str
+    school_id: uuid.UUID | None
+    school_name: str | None
+    include: str
+    courses: int
+    recipients: list[str]
+    filename: str
+    sent_by: str
+    sent_at: datetime
