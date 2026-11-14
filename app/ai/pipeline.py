@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from itertools import groupby
 from typing import cast
 
-from app.ai.checks.criteria import document_text, evaluate_principle, explain_principle
+from app.ai.checks.criteria import STRUCTURE_HINTS, document_text, evaluate_principle, explain_principle
 from app.ai.checks.grounded import repair_evidence
 from app.ai.checks.technical import build_report, evaluate_rule
 from app.ai.decisions import Decision, DecisionMaker, get_decider
@@ -77,9 +77,7 @@ def _state(content: ExtractedContent, report: TechnicalReport) -> list[str]:
     """What the decision model reads: the syllabus, and the structure findings the chat model is also given."""
     state = [f"Syllabus:\n{document_text(content)}"]
     if report.issues:
-        state.append(
-            "Automated structure findings (reliable):\n" + "\n".join(f"- {i.message}" for i in report.issues)
-        )
+        state.append(STRUCTURE_HINTS + "\n".join(f"- {i.message}" for i in report.issues))
     return state
 
 

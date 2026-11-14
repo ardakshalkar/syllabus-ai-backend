@@ -33,14 +33,16 @@ def build_report(content: ExtractedContent) -> TechnicalReport:
         )
 
     assessed = {code for a in content.assessments for code in a.outcomes}
-    report.unassessed_outcomes = [o.code for o in content.outcomes if o.code not in assessed]
+    # Only a syllabus whose assessment names outcomes at all can leave one out. Many link outcomes to tasks
+    # elsewhere (in the weekly plan, in prose) or not by code, and would otherwise "miss" every outcome.
+    report.unassessed_outcomes = [o.code for o in content.outcomes if assessed and o.code not in assessed]
     for code in report.unassessed_outcomes:
         report.issues.append(
             TechnicalIssue(code="unassessed_outcome", message=f"{code} is not mapped to an assessment")
         )
     if not content.outcomes:
         report.issues.append(
-            TechnicalIssue(code="no_outcomes", message="No numbered learning outcomes found")
+            TechnicalIssue(code="no_outcomes", message="No learning outcomes were found by the automatic reading")
         )
     return report
 

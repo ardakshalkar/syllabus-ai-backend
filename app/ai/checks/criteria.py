@@ -147,6 +147,14 @@ def document_text(content: ExtractedContent) -> str:
     return text[:limit] + "\n[document truncated]"
 
 
+# The structure findings (checks.technical) count what the extraction found. Syllabi differ in layout, and an
+# outcome or weight the extraction missed would turn into a false finding if the models took these as fact.
+STRUCTURE_HINTS = (
+    "Hints from an automatic reading of the structure (it can miss content in tables or unusual layouts; "
+    "confirm each against the syllabus text before relying on it):\n"
+)
+
+
 def build_user_prompt(
     specs: list[CriterionSpec],
     content: ExtractedContent,
@@ -169,8 +177,7 @@ def build_user_prompt(
     parts = [f"Syllabus:\n<<<\n{document_text(content)}\n>>>"]
     if report.issues:
         parts.append(
-            "Automated structure findings (reliable, use them):\n"
-            + "\n".join(f"- {i.message}" for i in report.issues)
+            STRUCTURE_HINTS + "\n".join(f"- {i.message}" for i in report.issues)
         )
     for name in sorted(
         {s.required_context for s in specs if s.required_context and s.required_context in context}
