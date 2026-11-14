@@ -53,6 +53,7 @@ Rules:
 EXPLAIN_SYSTEM_PROMPT = """You review university course syllabi for Narxoz University against a quality rubric.
 Every criterion you are given already has its status, decided by a separate reviewer. Do not change it.
 Statuses mean:
+- "Compliant": the syllabus clearly satisfies the criterion. Cite the passage that demonstrates this.
 - "Partially compliant": addressed, but incompletely or ambiguously.
 - "Not compliant": missing or contradicted. {missing_rule}
 - "Cannot verify": {cannot_verify_rule}
@@ -60,7 +61,7 @@ For every criterion write:
 - "evidence": copied verbatim from the syllabus: one short passage, at most 200 characters. Never paraphrase.
   When something is missing, quote the closest related passage (for example the outcome that is not assessed).
 - "explanation": why the evidence leads to the given status, in one short sentence.
-- "recommendation": one concrete edit the professor can make, in one sentence.
+- "recommendation": one concrete edit the professor can make, in one sentence. Leave it empty ("") for Compliant.
 - Write explanation and recommendation in {language}. Keep evidence in the syllabus's original language.
 - Judge only what is written. Do not assume content that is not in the document.
 - Be brief: the answer is read by software, not by people."""
@@ -255,7 +256,13 @@ async def explain_principle(
         ),
         user=build_user_prompt(specs, content, report, context, statuses),
         schema=explain_schema(codes),
-        meta={"criteria": specs, "statuses": statuses, "content": content, "report": report, "context": context},
+        meta={
+            "criteria": specs,
+            "statuses": statuses,
+            "content": content,
+            "report": report,
+            "context": context,
+        },
         run_id=run_id,
         trace=trace,
     )
@@ -267,28 +274,32 @@ async def explain_principle(
     out = []
     for code in codes:
         item = written.get(code, {})
+        evidence = (item.get("evidence") or "").strip()
+        status = statuses[code]
+        if not evidence and status != ResultStatus.cannot_verify:
+            out.append(
+                CriterionResultData(
+                    criterion_id=code,
+                    status=ResultStatus.cannot_verify,
+                    evidence="",
+                    explanation="The evaluator returned no supporting passage, so its decision could not be verified.",
+                    recommendation="Run the check again to obtain evidence for this criterion.",
+                    confidence=None,
+                    evidence_verified=False,
+                )
+            )
+            continue
         out.append(
             CriterionResultData(
                 criterion_id=code,
-                status=statuses[code],
-                evidence=(item.get("evidence") or "").strip(),
+                status=status,
+                evidence=evidence,
                 explanation=(item.get("explanation") or "").strip()
                 or "The evaluator returned no explanation for this criterion.",
-                recommendation=(item.get("recommendation") or "").strip(),
+                recommendation=NO_CHANGE
+                if status == ResultStatus.compliant
+                else (item.get("recommendation") or "").strip(),
                 confidence=confidences.get(code),
             )
         )
     return out
-
-
-def decided_compliant(code: str, confidence: float | None) -> CriterionResultData:
-    """A criterion the decision model passed: no chat model request, so no quoted evidence."""
-    sure = f" ({round(confidence * 100)}% confidence)" if confidence is not None else ""
-    return CriterionResultData(
-        criterion_id=code,
-        status=ResultStatus.compliant,
-        evidence="",
-        explanation=f"Judged compliant by the decision model{sure}.",
-        recommendation=NO_CHANGE,
-        confidence=confidence,
-    )

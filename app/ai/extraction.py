@@ -1,9 +1,14 @@
 """Turn an uploaded .docx/.pdf into ExtractedContent: paragraphs, sections, outcomes, weeks, assessments."""
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.ai.types import AssessmentItem, ExtractedContent, Outcome, Week
+
+if TYPE_CHECKING:
+    from docx.table import Table, _Cell
 
 
 class ExtractionError(Exception):
@@ -61,8 +66,25 @@ def _section_for_heading(text: str) -> str | None:
     return None
 
 
+def iter_rows(table: "Table") -> "Iterator[list[_Cell]]":
+    """Every row of a table, then the rows of the tables nested in its cells, in document order.
+
+    `cell.text` holds only a cell's own paragraphs, so a table nested in a cell (the Narxoz template keeps the
+    weekly plan and the assessment table inside its outer two-column table) must be walked separately."""
+    for row in table.rows:
+        cells = list(row.cells)
+        yield cells
+        seen: list[object] = []
+        for cell in cells:
+            if cell._tc in seen:  # a merged cell appears once per grid column it spans
+                continue
+            seen.append(cell._tc)
+            for nested in cell.tables:
+                yield from iter_rows(nested)
+
+
 def _read_docx(path: Path) -> list[tuple[str, bool]]:
-    """(text, is_heading) in document order; table rows are joined with ' | '."""
+    """(text, is_heading) in document order; table rows, nested ones included, are joined with ' | '."""
     import docx
     from docx.table import Table
     from docx.text.paragraph import Paragraph
@@ -79,8 +101,8 @@ def _read_docx(path: Path) -> list[tuple[str, bool]]:
                 style = (block.style.name if block.style is not None else "") or ""
                 lines.append((text, style.lower().startswith(("heading", "title"))))
         elif isinstance(block, Table):
-            for row in block.rows:
-                cells = [c.text.strip() for c in row.cells]
+            for row in iter_rows(block):
+                cells = [c.text.strip() for c in row]
                 unique = [c for i, c in enumerate(cells) if c and c not in cells[:i]]
                 if unique:
                     lines.append((" | ".join(unique), False))

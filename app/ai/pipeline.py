@@ -7,11 +7,12 @@ from dataclasses import dataclass, field
 from itertools import groupby
 from typing import cast
 
-from app.ai.checks.criteria import decided_compliant, document_text, evaluate_principle, explain_principle
+from app.ai.checks.criteria import document_text, evaluate_principle, explain_principle
+from app.ai.checks.grounded import repair_evidence
 from app.ai.checks.technical import build_report, evaluate_rule
 from app.ai.decisions import Decision, DecisionMaker, get_decider
-from app.ai.evidence import verify
-from app.ai.llm import LLMProvider
+from app.ai.evidence import evidence_found, recover_table_quote, verify
+from app.ai.llm import LLMError, LLMProvider
 from app.ai.types import (
     CriterionResultData,
     CriterionSpec,
@@ -76,7 +77,9 @@ def _state(content: ExtractedContent, report: TechnicalReport) -> list[str]:
     """What the decision model reads: the syllabus, and the structure findings the chat model is also given."""
     state = [f"Syllabus:\n{document_text(content)}"]
     if report.issues:
-        state.append("Automated structure findings (reliable):\n" + "\n".join(f"- {i.message}" for i in report.issues))
+        state.append(
+            "Automated structure findings (reliable):\n" + "\n".join(f"- {i.message}" for i in report.issues)
+        )
     return state
 
 
@@ -112,7 +115,7 @@ async def evaluate(
     library_report: library.LibraryReport | None = None,
 ) -> EvaluationOutput:
     """With a decision model (`decider`), it gives every criterion its status in one request and the chat model
-    (`llm`) only writes evidence, explanation and recommendation for those that are not Compliant. Without one,
+    (`llm`) writes evidence and explanations for every decision, including Compliant. Without one,
     the chat model does both, one request per principle.
 
     `library_report` (library.check_literature) decides the library criterion by rule, without a model."""
@@ -147,12 +150,9 @@ async def evaluate(
         progress = Progress(CRITERIA, criteria_total=len(specs), running=["All criteria (decision model)"])
         await on_phase(progress)
         decisions = await dm.decide(_state(content, report), to_llm, run_id=run_id, trace=trace)
-        for code, d in decisions.items():
-            if d.status == ResultStatus.compliant:
-                results[code] = decided_compliant(code, d.confidence)
-    # Explained: decided but not Compliant. Undecided (no decision model, or it skipped a criterion): the chat
-    # model decides those itself.
-    to_explain = [s for s in to_llm if s.code in decisions and s.code not in results]
+    # Every model decision needs a cited passage, including Compliant decisions. Undecided criteria
+    # (no decision model, or it skipped a criterion) are still decided by the chat model.
+    to_explain = [s for s in to_llm if s.code in decisions]
     undecided = [s for s in to_llm if s.code not in decisions]
     statuses = {code: d.status for code, d in decisions.items()}
     confidences = {code: d.confidence for code, d in decisions.items()}
@@ -170,7 +170,15 @@ async def evaluate(
             try:
                 if explain:
                     result = await explain_principle(
-                        llm, batch, statuses, confidences, content, report, context, run_id=run_id, trace=trace
+                        llm,
+                        batch,
+                        statuses,
+                        confidences,
+                        content,
+                        report,
+                        context,
+                        run_id=run_id,
+                        trace=trace,
                     )
                 else:
                     result = await evaluate_principle(
@@ -183,7 +191,9 @@ async def evaluate(
         return result
 
     batches = jobs  # for the progress counts below
-    model_version = f"{dm.model_version}+{llm.model_version}" if dm is not None and decisions else llm.model_version
+    model_version = (
+        f"{dm.model_version}+{llm.model_version}" if dm is not None and decisions else llm.model_version
+    )
     await on_phase(progress)
     tasks = [asyncio.ensure_future(evaluate_batch(b, explain)) for b, explain in jobs]
     try:
@@ -201,6 +211,48 @@ async def evaluate(
     await on_phase(Progress(EVIDENCE, len(specs), len(batches), len(batches)))
     ordered = [results[s.code] for s in specs if s.code in results]
     if CheckKind.evidence in checks:
+        ai_codes = {s.code for s in to_llm}
+        ordered = [
+            recover_table_quote(r, content.raw_text) if r.criterion_id in ai_codes else r for r in ordered
+        ]
+        results.update({r.criterion_id: r for r in ordered})
+        broken = {
+            r.criterion_id: r
+            for r in ordered
+            if r.criterion_id in ai_codes
+            and (
+                r.evidence_verified is False
+                or (
+                    r.status != ResultStatus.cannot_verify
+                    and (
+                        not r.evidence
+                        or not evidence_found(r.evidence, content.raw_text, settings.evidence_match_threshold)
+                    )
+                )
+            )
+        }
+        if broken:
+            # Retry only affected principles. A quotation error must not silently erase a substantive finding.
+            for batch in _by_principle([s for s in to_llm if s.code in broken]):
+                try:
+                    repaired = await asyncio.wait_for(
+                        repair_evidence(
+                            llm,
+                            batch,
+                            [broken[s.code] for s in batch],
+                            content,
+                            context,
+                            run_id=run_id,
+                            trace=trace,
+                        ),
+                        timeout=min(settings.llm_timeout_s, 45),
+                    )
+                except (LLMError, TimeoutError):
+                    # If repair is unavailable, the existing evidence guard still rejects unsupported claims.
+                    continue
+                for r in repaired:
+                    results[r.criterion_id] = r
+            ordered = [results[s.code] for s in specs if s.code in results]
         ordered = [verify(r, content.raw_text, settings.evidence_match_threshold) for r in ordered]
     else:
         ordered = [r.model_copy(update={"evidence": ""}) for r in ordered]

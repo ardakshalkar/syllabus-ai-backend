@@ -8,6 +8,7 @@ from docx.table import _Cell
 from docx.text.paragraph import Paragraph
 
 from app.ai.evidence import normalize
+from app.ai.extraction import iter_rows
 from app.ai.render_docx import _save, render_content
 from app.ai.types import ExtractedContent
 
@@ -72,9 +73,9 @@ def apply_docx(path: Path, edits: list[Edit]) -> ApplyResult:
     paragraphs = list(document.paragraphs)
     rows = []
     for table in document.tables:
-        for row in table.rows:
-            rows.append(list(row.cells))
-            for cell in row.cells:
+        for cells in iter_rows(table):  # nested tables too, as extraction reads them
+            rows.append(cells)
+            for cell in cells:
                 paragraphs.extend(cell.paragraphs)
 
     applied, leftovers = 0, []

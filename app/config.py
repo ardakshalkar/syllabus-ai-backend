@@ -106,7 +106,10 @@ class Settings(BaseSettings):
     # are not Compliant. Empty: the chat model decides every status itself, one request per principle.
     decision_model: str = ""
     decision_url: str = "https://openrouter.ai/api/alpha/decisions"
-    checker_version: str = "2026.10"
+    checker_version: str = "2026.11"
+    # Read a syllabus as Markdown (markitdown) and have the chat model extract its outcomes, assessment, weeks
+    # and sections (app/ai/structure.py). Off, or when that fails: the line-based regex extraction.
+    structure_extraction: bool = True
     evidence_match_threshold: int = 85
 
     precheck_ttl_s: int = 3600
