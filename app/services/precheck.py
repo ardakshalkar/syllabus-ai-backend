@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import pipeline
-from app.ai.extraction import ExtractionError, extract
+from app.ai import pipeline, structure
+from app.ai.extraction import ExtractionError
 from app.ai.llm import get_llm
 from app.auth.rbac import Principal, ensure_course_lead
 from app.config import get_settings
@@ -97,7 +97,7 @@ async def run_job(job_id: str) -> bool:
                 .join(Course, Course.program_id == Program.id)
                 .where(Course.id == uuid.UUID(state["course_id"]))
             )
-        content = await asyncio.to_thread(extract, path)
+        content, _ = await structure.read_syllabus(path, get_llm())
 
         async def on_phase(progress: pipeline.Progress) -> None:
             run_progress.apply(live, progress)

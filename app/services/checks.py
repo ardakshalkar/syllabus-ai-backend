@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 import uuid
@@ -8,8 +7,8 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import pipeline
-from app.ai.extraction import ExtractionError, extract
+from app.ai import pipeline, structure
+from app.ai.extraction import ExtractionError
 from app.ai.llm import get_llm
 from app.ai.types import EvaluationOutput, ExtractedContent
 from app.db.pg import session_scope
@@ -81,14 +80,17 @@ async def create_run(
 
 
 async def load_content(version: SyllabusVersion) -> ExtractedContent:
-    """Extracted content is cached per version in Mongo; versions are immutable so it never goes stale.
+    """Extracted content is cached per version in Mongo; versions are immutable so it never goes stale, but a
+    cache entry made by another extractor than the one configured is redone (e.g. after a fallback).
     A version read from Google Drive is downloaded for the extraction only and not kept."""
     cached = await ExtractedDocument.find_one(ExtractedDocument.version_id == version.id)
-    if cached:
+    if cached and cached.extractor == structure.wanted_extractor():
         return cached.content
     async with files.local_copy(version) as path:
-        content = await asyncio.to_thread(extract, path)
-    await ExtractedDocument(version_id=version.id, content=content).insert()
+        content, extractor = await structure.read_syllabus(path, get_llm())
+    if cached:
+        await cached.delete()
+    await ExtractedDocument(version_id=version.id, content=content, extractor=extractor).insert()
     async with session_scope() as session:  # a syllabus read from Drive learns its language here
         await session.execute(
             sa.update(Syllabus)
@@ -432,7 +434,8 @@ async def recount_severity(session: AsyncSession) -> int:
         .join(
             SyllabusVersion,
             sa.and_(
-                SyllabusVersion.syllabus_id == Syllabus.id, SyllabusVersion.version == Syllabus.current_version
+                SyllabusVersion.syllabus_id == Syllabus.id,
+                SyllabusVersion.version == Syllabus.current_version,
             ),
         )
         .join(AssessmentRun, AssessmentRun.version_id == SyllabusVersion.id)
