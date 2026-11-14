@@ -1,0 +1,472 @@
+# Fixed finding texts for rubric 2026.3, in English, Russian and Kazakh.
+#
+# For every criterion: `problem` is the headline a professor reads when the criterion is Partially compliant
+# or Not compliant, and `fix` is the general way to fix it. They are written once, reviewed by people, and do
+# not depend on the syllabus. The AI's own explanation and recommendation for the particular syllabus are
+# shown under them, translated into the reader's language after each check.
+#
+# Changing these texts needs no new rubric version: `python -m app.cli set-texts rubric/2026.3.texts.yaml`
+# copies them onto the imported 2026.3. `import-rubric rubric/2026.3.yaml` also reads this file.
+#
+# STATUS: provisional wording (2026-11-14). The Russian and Kazakh texts need a review by the Provost
+# Office before they are relied on.
+rubric: "2026.3"
+criteria:
+  # 1 Course content
+  "1.1":
+    problem:
+      en: "Goals, learning outcomes, topics and assessment are not fully aligned with each other."
+      ru: "Цели, результаты обучения, темы и оценивание не полностью согласованы между собой."
+      kk: "Мақсаттар, оқу нәтижелері, тақырыптар және бағалау бір-бірімен толық сәйкестендірілмеген."
+    fix:
+      en: "Link each learning outcome to the topics that build it and to the assessment that checks it, and remove contradictions between sections."
+      ru: "Свяжите каждый результат обучения с темами, которые его формируют, и с заданием, которое его проверяет; устраните противоречия между разделами."
+      kk: "Әрбір оқу нәтижесін оны қалыптастыратын тақырыптармен және оны тексеретін тапсырмамен байланыстырыңыз, бөлімдер арасындағы қайшылықтарды жойыңыз."
+  "1.2":
+    problem:
+      en: "Some sections are not clearly connected to the learning outcomes, or repeat each other."
+      ru: "Некоторые разделы явно не связаны с результатами обучения или дублируют друг друга."
+      kk: "Кейбір бөлімдер оқу нәтижелерімен анық байланыспаған немесе бірін-бірі қайталайды."
+    fix:
+      en: "For every section, state which learning outcomes it serves; remove or merge sections that serve none or duplicate others."
+      ru: "Для каждого раздела укажите, каким результатам обучения он служит; уберите или объедините разделы, которые не служат ни одному или повторяют другие."
+      kk: "Әр бөлім үшін ол қандай оқу нәтижелеріне қызмет ететінін көрсетіңіз; ешқайсысына қызмет етпейтін немесе басқаларын қайталайтын бөлімдерді алып тастаңыз немесе біріктіріңіз."
+  "1.3":
+    problem:
+      en: "The course does not clearly progress from simple to complex material."
+      ru: "Курс не выстроен последовательно от простого к сложному."
+      kk: "Курс қарапайымнан күрделіге қарай жүйелі құрылмаған."
+    fix:
+      en: "Order the topics so that basic concepts come first and later topics build on them; add transitions where complexity jumps."
+      ru: "Расположите темы так, чтобы базовые понятия шли первыми, а последующие темы опирались на них; добавьте переходы там, где сложность резко возрастает."
+      kk: "Тақырыптарды негізгі ұғымдар алдымен келетіндей, ал кейінгі тақырыптар соларға сүйенетіндей етіп орналастырыңыз; күрделілік күрт өсетін жерлерге өтпелі тақырыптар қосыңыз."
+  "1.4":
+    problem:
+      en: "The syllabus lists the course goals without explaining how the course achieves them."
+      ru: "Силлабус перечисляет цели курса, но не объясняет, как курс их достигает."
+      kk: "Силлабуста курстың мақсаттары тізіліп берілген, бірақ курс оларға қалай жететіні түсіндірілмеген."
+    fix:
+      en: "Add a short explanation of how the topics, methods and tasks lead students to the course goals."
+      ru: "Добавьте краткое пояснение, как темы, методы и задания ведут студентов к целям курса."
+      kk: "Тақырыптар, әдістер және тапсырмалар студенттерді курс мақсаттарына қалай жеткізетінін қысқаша түсіндіріңіз."
+  "1.5":
+    problem:
+      en: "The course does not clearly build skills in using artificial intelligence tools."
+      ru: "Курс явно не формирует навыки использования инструментов искусственного интеллекта."
+      kk: "Курс жасанды интеллект құралдарын пайдалану дағдыларын анық қалыптастырмайды."
+    fix:
+      en: "Add tasks in which students use AI tools, link them to learning outcomes, and state the rules for ethical and responsible AI use."
+      ru: "Добавьте задания, в которых студенты используют инструменты ИИ, свяжите их с результатами обучения и опишите правила этичного и ответственного использования ИИ."
+      kk: "Студенттер ЖИ құралдарын пайдаланатын тапсырмалар қосыңыз, оларды оқу нәтижелерімен байланыстырыңыз және ЖИ-ді әдепті әрі жауапкершілікпен пайдалану ережелерін көрсетіңіз."
+
+  # 2 Academic justification
+  "2.1":
+    problem:
+      en: "The syllabus does not show the course's place in the educational program."
+      ru: "Силлабус не показывает место курса в образовательной программе."
+      kk: "Силлабус курстың білім беру бағдарламасындағы орнын көрсетпейді."
+    fix:
+      en: "State the prerequisites and postrequisites, the level and type of the course (required or elective), and how it contributes to the program."
+      ru: "Укажите пререквизиты и постреквизиты, уровень и тип курса (обязательный или элективный) и его вклад в программу."
+      kk: "Пререквизиттер мен постреквизиттерді, курстың деңгейі мен түрін (міндетті немесе элективті) және оның бағдарламаға қосатын үлесін көрсетіңіз."
+  "2.2":
+    problem:
+      en: "The course does not fully reflect the current state of the discipline."
+      ru: "Курс не в полной мере отражает современное состояние дисциплины."
+      kk: "Курс пәннің қазіргі жай-күйін толық көрсетпейді."
+    fix:
+      en: "Add current sources and contemporary approaches and problems of the discipline; comment critically on outdated concepts or replace them."
+      ru: "Добавьте актуальные источники, современные подходы и проблемы дисциплины; дайте критический комментарий к устаревшим концепциям или замените их."
+      kk: "Пәннің өзекті дереккөздерін, заманауи тәсілдері мен мәселелерін қосыңыз; ескірген тұжырымдамаларға сыни түсініктеме беріңіз немесе оларды ауыстырыңыз."
+  "2.3":
+    problem:
+      en: "The course reads as a set of scattered topics rather than a coherent academic core."
+      ru: "Курс выглядит как набор разрозненных тем, а не как целостное академическое ядро."
+      kk: "Курс біртұтас академиялық өзек емес, бытыраңқы тақырыптар жиынтығы сияқты көрінеді."
+    fix:
+      en: "Name the key categories and the central problem of the discipline, and show how each topic relates to them."
+      ru: "Обозначьте ключевые категории и центральную проблему дисциплины и покажите, как с ними связана каждая тема."
+      kk: "Пәннің негізгі категориялары мен басты мәселесін атаңыз және әр тақырыптың олармен қалай байланысатынын көрсетіңіз."
+  "2.4":
+    problem:
+      en: "The syllabus does not make clear why this course is needed in the program."
+      ru: "Из силлабуса неясно, зачем этот курс нужен в программе."
+      kk: "Силлабустан бұл курстың бағдарламада не үшін қажет екені түсініксіз."
+    fix:
+      en: "Describe the course's unique contribution and how it differs from other courses in the program, without generic phrases."
+      ru: "Опишите уникальный вклад курса и его отличие от других дисциплин программы, без общих фраз."
+      kk: "Курстың бірегей үлесін және оның бағдарламадағы басқа пәндерден айырмашылығын жалпы сөздерсіз сипаттаңыз."
+
+  # 3 Learning objectives and outcomes
+  "3.1":
+    problem:
+      en: "The course goal repeats the learning outcomes or is replaced by a list of topics or tasks."
+      ru: "Цель курса повторяет результаты обучения или подменена перечнем тем или задач."
+      kk: "Курс мақсаты оқу нәтижелерін қайталайды немесе тақырыптар не міндеттер тізімімен алмастырылған."
+    fix:
+      en: "Rewrite the goal as one or two sentences on the meaning of the course, distinct from the list of learning outcomes."
+      ru: "Сформулируйте цель одним-двумя предложениями о смысле курса, отдельно от перечня результатов обучения."
+      kk: "Мақсатты курстың мәні туралы бір-екі сөйлеммен, оқу нәтижелерінің тізімінен бөлек тұжырымдаңыз."
+  "3.2":
+    problem:
+      en: "The syllabus does not show how the course goal contributes to the goal of the educational program."
+      ru: "Силлабус не показывает, как цель курса способствует достижению цели образовательной программы."
+      kk: "Силлабус курс мақсатының білім беру бағдарламасының мақсатына қалай үлес қосатынын көрсетпейді."
+    fix:
+      en: "Reflect the key wording of the program's goal in the course goal and state what the course contributes to it."
+      ru: "Отразите в цели курса ключевые формулировки цели программы и укажите, какой вклад курс в неё вносит."
+      kk: "Курс мақсатында бағдарлама мақсатының негізгі тұжырымдарын көрсетіңіз және курстың оған қосатын үлесін жазыңыз."
+  "3.3":
+    problem:
+      en: "Learning outcomes are not given as a separate, structured block."
+      ru: "Результаты обучения не выделены в отдельный структурированный блок."
+      kk: "Оқу нәтижелері жеке құрылымдалған блок ретінде берілмеген."
+    fix:
+      en: "Add a section headed \"Learning outcomes\" with several numbered outcomes (LO1, LO2, …)."
+      ru: "Добавьте раздел «Результаты обучения» с несколькими пронумерованными результатами (РО1, РО2, …)."
+      kk: "«Оқу нәтижелері» бөлімін қосып, онда бірнеше нөмірленген нәтижені (ОН1, ОН2, …) көрсетіңіз."
+  "3.4":
+    problem:
+      en: "The course outcomes are not connected to the learning outcomes of the educational program."
+      ru: "Результаты курса не связаны с результатами обучения образовательной программы."
+      kk: "Курс нәтижелері білім беру бағдарламасының оқу нәтижелерімен байланыспаған."
+    fix:
+      en: "For each course outcome, name the program outcome it contributes to, using the program's wording."
+      ru: "Для каждого результата курса укажите, в какой результат программы он вносит вклад, используя формулировки программы."
+      kk: "Курстың әр нәтижесі үшін ол бағдарламаның қай нәтижесіне үлес қосатынын бағдарлама тұжырымдарын қолдана отырып көрсетіңіз."
+  "3.5":
+    problem:
+      en: "Some learning outcomes do not describe observable, verifiable actions."
+      ru: "Некоторые результаты обучения не описывают наблюдаемые и проверяемые действия."
+      kk: "Кейбір оқу нәтижелері бақыланатын және тексерілетін әрекеттерді сипаттамайды."
+    fix:
+      en: "Start each outcome with a measurable action verb (analyses, applies, evaluates) instead of vague ones such as \"knows\" or \"understands\"."
+      ru: "Начинайте каждый результат с измеримого глагола действия (анализирует, применяет, оценивает) вместо размытых «знает» или «понимает»."
+      kk: "Әр нәтижені «біледі» немесе «түсінеді» сияқты бұлыңғыр етістіктердің орнына өлшенетін әрекет етістігінен (талдайды, қолданады, бағалайды) бастаңыз."
+  "3.6":
+    problem:
+      en: "The learning outcomes stay at the level of reproducing information."
+      ru: "Результаты обучения остаются на уровне воспроизведения информации."
+      kk: "Оқу нәтижелері ақпаратты қайта жаңғырту деңгейінде қалып отыр."
+    fix:
+      en: "Add outcomes at the levels of application, analysis and evaluation (Bloom's taxonomy), not only \"knows\" and \"describes\"."
+      ru: "Добавьте результаты уровней применения, анализа и оценки (таксономия Блума), а не только «знает» и «описывает»."
+      kk: "Тек «біледі» және «сипаттайды» емес, қолдану, талдау және бағалау деңгейіндегі (Блум таксономиясы) нәтижелерді қосыңыз."
+  "3.7":
+    problem:
+      en: "The learning outcomes do not match the level of the program."
+      ru: "Результаты обучения не соответствуют уровню программы."
+      kk: "Оқу нәтижелері бағдарлама деңгейіне сәйкес келмейді."
+    fix:
+      en: "Adjust the outcomes to the level: foundational and applied for a bachelor's program, research and conceptual for a master's or doctoral one."
+      ru: "Приведите результаты в соответствие с уровнем: базовые и прикладные для бакалавриата, исследовательские и концептуальные для магистратуры и докторантуры."
+      kk: "Нәтижелерді деңгейге сәйкестендіріңіз: бакалавриат үшін іргелі және қолданбалы, магистратура мен докторантура үшін зерттеушілік және тұжырымдамалық."
+
+  # 4 Logic of content structure
+  "4.1":
+    problem:
+      en: "The course content is not clearly divided into topics, modules or weeks."
+      ru: "Содержание курса чётко не разделено на темы, модули или недели."
+      kk: "Курс мазмұны тақырыптарға, модульдерге немесе апталарға анық бөлінбеген."
+    fix:
+      en: "Divide the content into numbered topics or modules, each with its own heading."
+      ru: "Разделите содержание на пронумерованные темы или модули, каждый со своим заголовком."
+      kk: "Мазмұнды әрқайсысының өз тақырыбы бар нөмірленген тақырыптарға немесе модульдерге бөліңіз."
+  "4.2":
+    problem:
+      en: "Some topics mix unrelated subject areas without a clear focus."
+      ru: "Некоторые темы смешивают несвязанные предметные области без чёткого фокуса."
+      kk: "Кейбір тақырыптар нақты бағытсыз өзара байланыссыз пән салаларын араластырады."
+    fix:
+      en: "Give each topic one subject focus; split topics that combine unrelated questions, or explain the link between them."
+      ru: "Задайте каждой теме один предметный фокус; разделите темы, объединяющие несвязанные вопросы, или поясните связь между ними."
+      kk: "Әр тақырыпқа бір пәндік бағыт беріңіз; өзара байланыссыз сұрақтарды біріктіретін тақырыптарды бөліңіз немесе олардың арасындағы байланысты түсіндіріңіз."
+  "4.3":
+    problem:
+      en: "Complex concepts appear before the basic ones they rely on."
+      ru: "Сложные понятия появляются раньше базовых, на которые они опираются."
+      kk: "Күрделі ұғымдар өздері сүйенетін негізгі ұғымдардан бұрын беріледі."
+    fix:
+      en: "Introduce key concepts and categories first, then theories and models, then analysis and critique."
+      ru: "Сначала вводите ключевые понятия и категории, затем теории и модели, затем анализ и критику."
+      kk: "Алдымен негізгі ұғымдар мен категорияларды, содан кейін теориялар мен модельдерді, содан соң талдау мен сынды беріңіз."
+  "4.4":
+    problem:
+      en: "Some learning outcomes are not covered by any course topic."
+      ru: "Некоторые результаты обучения не покрыты ни одной темой курса."
+      kk: "Кейбір оқу нәтижелері курстың ешбір тақырыбымен қамтылмаған."
+    fix:
+      en: "Check each learning outcome against the topics and add or extend topics for every outcome left uncovered."
+      ru: "Сверьте каждый результат обучения с темами и добавьте или расширьте темы для каждого непокрытого результата."
+      kk: "Әр оқу нәтижесін тақырыптармен салыстырып, қамтылмаған әр нәтиже үшін тақырып қосыңыз немесе бар тақырыпты кеңейтіңіз."
+  "4.5":
+    problem:
+      en: "The content does not include the key questions and debates of the discipline."
+      ru: "Содержание не включает ключевые вопросы и дискуссии дисциплины."
+      kk: "Мазмұнға пәннің негізгі мәселелері мен пікірталастары енгізілмеген."
+    fix:
+      en: "Add problem questions, competing approaches or theories, and practical examples to the topics."
+      ru: "Добавьте в темы проблемные вопросы, конкурирующие подходы или теории и практические примеры."
+      kk: "Тақырыптарға проблемалық сұрақтарды, бәсекелес тәсілдер мен теорияларды және практикалық мысалдарды қосыңыз."
+  "4.6":
+    problem:
+      en: "The content mostly asks students to describe facts rather than analyse and interpret them."
+      ru: "Содержание в основном требует описания фактов, а не их анализа и интерпретации."
+      kk: "Мазмұн негізінен фактілерді талдау мен түсіндіруді емес, сипаттауды талап етеді."
+    fix:
+      en: "Add analytical tasks that ask students to compare, interpret and evaluate, not only to describe."
+      ru: "Добавьте аналитические задания, в которых студенты сравнивают, интерпретируют и оценивают, а не только описывают."
+      kk: "Студенттер тек сипаттап қана қоймай, салыстыратын, түсіндіретін және бағалайтын талдамалық тапсырмалар қосыңыз."
+
+  # 5 Teaching methods
+  "5.1":
+    problem:
+      en: "The teaching methods do not match the learning outcomes."
+      ru: "Методы обучения не соответствуют результатам обучения."
+      kk: "Оқыту әдістері оқу нәтижелеріне сәйкес келмейді."
+    fix:
+      en: "Choose methods for each outcome: seminars, cases and discussions for analysis; projects or research work for research outcomes."
+      ru: "Подберите методы под каждый результат: семинары, кейсы и дискуссии для анализа; проекты или исследовательскую работу для исследовательских результатов."
+      kk: "Әр нәтижеге әдіс таңдаңыз: талдау үшін семинарлар, кейстер мен пікірталастар; зерттеу нәтижелері үшін жобалар немесе зерттеу жұмысы."
+  "5.2":
+    problem:
+      en: "The teaching methods do not match the competencies the course is meant to develop."
+      ru: "Методы обучения не соответствуют компетенциям, которые курс должен формировать."
+      kk: "Оқыту әдістері курс қалыптастыруға тиіс құзыреттерге сәйкес келмейді."
+    fix:
+      en: "Use practical tasks for practical skills and analytical tasks for theoretical ones, and drop methods listed only for form's sake."
+      ru: "Используйте практические задания для практических навыков и аналитические — для теоретических; уберите методы, указанные лишь формально."
+      kk: "Практикалық дағдылар үшін практикалық, теориялық дағдылар үшін талдамалық тапсырмаларды қолданыңыз; тек формалды түрде көрсетілген әдістерді алып тастаңыз."
+  "5.3":
+    problem:
+      en: "The course relies on a single form of teaching."
+      ru: "Курс опирается на единственную форму обучения."
+      kk: "Курс оқытудың бір ғана түріне негізделген."
+    fix:
+      en: "Combine lectures with other forms such as seminars, practicals, discussions or projects."
+      ru: "Сочетайте лекции с другими формами: семинарами, практическими занятиями, дискуссиями или проектами."
+      kk: "Дәрістерді семинарлар, практикалық сабақтар, пікірталастар немесе жобалар сияқты басқа түрлермен ұштастырыңыз."
+  "5.4":
+    problem:
+      en: "The choice of methods looks like a template that ignores the nature of the discipline."
+      ru: "Выбор методов выглядит шаблонным и не учитывает специфику дисциплины."
+      kk: "Әдістерді таңдау үлгі бойынша жасалған сияқты және пәннің ерекшелігін ескермейді."
+    fix:
+      en: "Choose methods that suit the discipline: discussions and texts for humanities, practicals and cases for applied fields, projects and data analysis for research-oriented ones."
+      ru: "Подберите методы под дисциплину: дискуссии и тексты для гуманитарных, практикумы и кейсы для прикладных, проекты и анализ данных для исследовательских."
+      kk: "Пәнге сай әдістерді таңдаңыз: гуманитарлық пәндер үшін пікірталас пен мәтіндер, қолданбалы пәндер үшін практикум мен кейстер, зерттеушілік пәндер үшін жобалар мен деректерді талдау."
+  "5.5":
+    problem:
+      en: "The methods leave students in a mostly passive role."
+      ru: "Методы оставляют студентам преимущественно пассивную роль."
+      kk: "Әдістер студенттерге негізінен енжар рөл береді."
+    fix:
+      en: "Add discussions, presentations, group tasks and independent analytical work in which students act."
+      ru: "Добавьте дискуссии, презентации, групповые задания и самостоятельную аналитическую работу, где студенты действуют сами."
+      kk: "Студенттер өздері әрекет ететін пікірталастар, презентациялар, топтық тапсырмалар және өзіндік талдамалық жұмыс қосыңыз."
+  "5.6":
+    problem:
+      en: "The teaching methods are only listed, not explained."
+      ru: "Методы обучения только перечислены, но не объяснены."
+      kk: "Оқыту әдістері тек тізіліп берілген, түсіндірілмеген."
+    fix:
+      en: "For each method, add a sentence on why it is used and what it gives students."
+      ru: "Для каждого метода добавьте предложение о том, зачем он используется и что он даёт студентам."
+      kk: "Әр әдіс үшін оның не үшін қолданылатыны және студенттерге не беретіні туралы бір сөйлем қосыңыз."
+
+  # 6 Assessment system
+  "6.1":
+    problem:
+      en: "Some learning outcomes are not checked by any assessment task."
+      ru: "Некоторые результаты обучения не проверяются ни одним заданием."
+      kk: "Кейбір оқу нәтижелері ешбір бағалау тапсырмасымен тексерілмейді."
+    fix:
+      en: "Map each learning outcome to the task that assesses it, and add a task for every outcome left unassessed."
+      ru: "Сопоставьте каждый результат обучения с заданием, которое его оценивает, и добавьте задание для каждого неоцениваемого результата."
+      kk: "Әр оқу нәтижесін оны бағалайтын тапсырмамен сәйкестендіріңіз және бағаланбай қалған әр нәтиже үшін тапсырма қосыңыз."
+  "6.2":
+    problem:
+      en: "Some assessment forms do not suit the outcomes they are meant to check."
+      ru: "Некоторые формы оценивания не подходят для проверки соответствующих результатов."
+      kk: "Бағалаудың кейбір түрлері өздері тексеруге тиіс нәтижелерге сай келмейді."
+    fix:
+      en: "Match the form to the outcome: essays or cases for analysis, practical work for skills, tests for knowledge."
+      ru: "Подберите форму под результат: эссе или кейс для анализа, практическая работа для навыков, тест для знаний."
+      kk: "Түрін нәтижеге сәйкестендіріңіз: талдау үшін эссе немесе кейс, дағды үшін практикалық жұмыс, білім үшін тест."
+  "6.3":
+    problem:
+      en: "Not all assessment tasks are listed and described."
+      ru: "Не все задания оценивания перечислены и описаны."
+      kk: "Барлық бағалау тапсырмалары тізіліп, сипатталмаған."
+    fix:
+      en: "List every assessment task in the \"Assessment\" section with a short description, so that no form of assessment is hidden."
+      ru: "Перечислите все задания в разделе «Оценивание» с кратким описанием, чтобы не осталось «скрытых» форм оценивания."
+      kk: "«Бағалау» бөлімінде барлық тапсырмаларды қысқаша сипаттамасымен тізіп беріңіз, «жасырын» бағалау түрлері қалмасын."
+  "6.4":
+    problem:
+      en: "It is not clear what marks are given for and how they are calculated."
+      ru: "Неясно, за что и как выставляются баллы."
+      kk: "Балдардың не үшін және қалай қойылатыны түсініксіз."
+    fix:
+      en: "For each task, give its weight in the final grade and the criteria it is graded by."
+      ru: "Для каждого задания укажите его вес в итоговой оценке и критерии, по которым оно оценивается."
+      kk: "Әр тапсырма үшін оның қорытынды бағадағы үлесін және бағалау критерийлерін көрсетіңіз."
+  "6.5":
+    problem:
+      en: "Assessment is concentrated at the end of the course instead of spread across it."
+      ru: "Оценивание сосредоточено в конце курса, а не распределено по нему."
+      kk: "Бағалау курс бойына бөлінбей, соңына шоғырланған."
+    fix:
+      en: "Spread assessment over the weeks with continuous tasks, so that not everything falls at the end."
+      ru: "Распределите оценивание по неделям с текущими заданиями, чтобы не всё приходилось на конец курса."
+      kk: "Бәрі курстың соңына қалмас үшін бағалауды ағымдағы тапсырмалармен апталарға бөліңіз."
+  "6.6":
+    problem:
+      en: "The course uses only one type of assessment."
+      ru: "В курсе используется только один вид оценивания."
+      kk: "Курста бағалаудың бір ғана түрі қолданылады."
+    fix:
+      en: "Use several forms of assessment, such as a test, an essay, a project and a presentation."
+      ru: "Используйте несколько форм оценивания, например тест, эссе, проект и презентацию."
+      kk: "Бағалаудың бірнеше түрін қолданыңыз, мысалы тест, эссе, жоба және презентация."
+  "6.7":
+    problem:
+      en: "The syllabus does not describe feedback or formative assessment."
+      ru: "Силлабус не описывает обратную связь и формативное оценивание."
+      kk: "Силлабуста кері байланыс пен қалыптастырушы бағалау сипатталмаған."
+    fix:
+      en: "Describe when and how students get feedback, and whether they can revise their work after it."
+      ru: "Опишите, когда и как студенты получают обратную связь и могут ли они после неё доработать свою работу."
+      kk: "Студенттердің кері байланысты қашан және қалай алатынын, одан кейін жұмысын түзете алатынын сипаттаңыз."
+
+  # 7 Resources
+  "7.1":
+    problem:
+      en: "The reading list does not fully reflect the current state of the discipline."
+      ru: "Список литературы не в полной мере отражает современное состояние дисциплины."
+      kk: "Әдебиеттер тізімі пәннің қазіргі жай-күйін толық көрсетпейді."
+    fix:
+      en: "Update the core and supplementary literature with recent sources from reputable publishers that cover the key approaches."
+      ru: "Обновите основную и дополнительную литературу актуальными источниками авторитетных издательств, охватывающими ключевые подходы."
+      kk: "Негізгі және қосымша әдебиеттерді негізгі тәсілдерді қамтитын беделді баспалардың соңғы дереккөздерімен жаңартыңыз."
+  "7.2":
+    problem:
+      en: "Some core literature was not found in the university's Scientific Library."
+      ru: "Часть основной литературы не найдена в Научной библиотеке университета."
+      kk: "Негізгі әдебиеттердің бір бөлігі университеттің Ғылыми кітапханасынан табылмады."
+    fix:
+      en: "Replace items the library does not hold with available ones, or ask the library to acquire them; give full bibliographic details."
+      ru: "Замените издания, которых нет в библиотеке, доступными или запросите их приобретение; указывайте полные библиографические данные."
+      kk: "Кітапханада жоқ басылымдарды қолжетімділерімен ауыстырыңыз немесе оларды сатып алуды сұраңыз; толық библиографиялық деректерді көрсетіңіз."
+  "7.3":
+    problem:
+      en: "The syllabus lists resources but does not show how they are used in the course."
+      ru: "Силлабус перечисляет ресурсы, но не показывает, как они используются в курсе."
+      kk: "Силлабуста ресурстар тізілген, бірақ олардың курста қалай қолданылатыны көрсетілмеген."
+    fix:
+      en: "Tie the articles, databases, cases and lab work to specific topics and tasks."
+      ru: "Привяжите статьи, базы данных, кейсы и лабораторные работы к конкретным темам и заданиям."
+      kk: "Мақалаларды, деректер базаларын, кейстер мен зертханалық жұмыстарды нақты тақырыптар мен тапсырмаларға байланыстырыңыз."
+  "7.4":
+    problem:
+      en: "The course materials are not structured or explained well enough for students to use them on their own."
+      ru: "Материалы курса недостаточно структурированы и пояснены для самостоятельной работы студентов."
+      kk: "Курс материалдары студенттердің өз бетінше пайдалануы үшін жеткілікті құрылымдалмаған және түсіндірілмеген."
+    fix:
+      en: "Group the materials by topic or module and add short instructions on how to use them."
+      ru: "Сгруппируйте материалы по темам или модулям и добавьте краткие инструкции по их использованию."
+      kk: "Материалдарды тақырыптар немесе модульдер бойынша топтастырып, оларды пайдалану туралы қысқа нұсқаулық қосыңыз."
+  "7.5":
+    problem:
+      en: "The materials do not support all of the stated learning outcomes."
+      ru: "Материалы не обеспечивают все заявленные результаты обучения."
+      kk: "Материалдар көрсетілген оқу нәтижелерінің барлығын қамтамасыз етпейді."
+    fix:
+      en: "Check each outcome against the materials and add sources for the outcomes they do not cover."
+      ru: "Сверьте каждый результат с материалами и добавьте источники для непокрытых результатов."
+      kk: "Әр нәтижені материалдармен салыстырып, қамтылмаған нәтижелер үшін дереккөздер қосыңыз."
+
+  # 8 Accessibility and clarity
+  "8.1":
+    problem:
+      en: "Parts of the syllabus are hard to read or use cumbersome wording."
+      ru: "Отдельные части силлабуса трудно читать, формулировки громоздкие."
+      kk: "Силлабустың кейбір бөліктерін оқу қиын, тұжырымдары ауыр."
+    fix:
+      en: "Shorten long sentences and paragraphs, explain specialised terms, and connect the sections logically."
+      ru: "Сократите длинные предложения и абзацы, поясните специальные термины и логически свяжите разделы."
+      kk: "Ұзын сөйлемдер мен абзацтарды қысқартыңыз, арнайы терминдерді түсіндіріңіз және бөлімдерді логикалық түрде байланыстырыңыз."
+  "8.2":
+    problem:
+      en: "The information is not structured for students to take in easily."
+      ru: "Информация не структурирована для удобного восприятия студентами."
+      kk: "Ақпарат студенттердің оңай қабылдауы үшін құрылымдалмаған."
+    fix:
+      en: "Use headings, tables and bulleted lists, and order the sections the way students will need them."
+      ru: "Используйте заголовки, таблицы и маркированные списки и расположите разделы в порядке, удобном для студентов."
+      kk: "Тақырыптарды, кестелер мен таңбаланған тізімдерді қолданып, бөлімдерді студенттерге ыңғайлы ретпен орналастырыңыз."
+  "8.3":
+    problem:
+      en: "The syllabus does not show students in an active role."
+      ru: "Силлабус не показывает активную роль студентов."
+      kk: "Силлабуста студенттердің белсенді рөлі көрсетілмеген."
+    fix:
+      en: "Describe what students do, in active wording such as \"the student analyses, presents, completes\"."
+      ru: "Опишите, что делают студенты, в активных формулировках: «студент анализирует, представляет, выполняет»."
+      kk: "Студенттердің не істейтінін белсенді тұжырымдармен сипаттаңыз: «студент талдайды, ұсынады, орындайды»."
+  "8.4":
+    problem:
+      en: "The course rules and requirements are not fully transparent to students."
+      ru: "Правила и требования курса недостаточно прозрачны для студентов."
+      kk: "Курс ережелері мен талаптары студенттер үшін жеткілікті ашық емес."
+    fix:
+      en: "State the deadlines, the forms of reporting and the assessment criteria explicitly, leaving no hidden requirements."
+      ru: "Явно укажите сроки, формы отчётности и критерии оценивания, не оставляя скрытых требований."
+      kk: "Мерзімдерді, есеп беру түрлерін және бағалау критерийлерін жасырын талаптар қалдырмай анық көрсетіңіз."
+
+  # 9 Course policy
+  "9.1":
+    problem:
+      en: "Academic integrity rules are missing or incomplete."
+      ru: "Правила академической честности отсутствуют или неполны."
+      kk: "Академиялық адалдық ережелері жоқ немесе толық емес."
+    fix:
+      en: "State the rules on citation, plagiarism, independent work and the use of AI, and the sanctions for breaking them."
+      ru: "Опишите правила цитирования, недопустимость плагиата, требования к самостоятельной работе и использованию ИИ, а также санкции за нарушения."
+      kk: "Дәйексөз келтіру, плагиат, өзіндік жұмыс және ЖИ-ді пайдалану ережелерін, сондай-ақ оларды бұзғаны үшін санкцияларды көрсетіңіз."
+  "9.2":
+    problem:
+      en: "The syllabus does not set norms of conduct, responsibility and respect."
+      ru: "Силлабус не устанавливает нормы поведения, ответственности и уважения."
+      kk: "Силлабуста мінез-құлық, жауапкершілік және құрмет нормалары белгіленбеген."
+    fix:
+      en: "Add rules of conduct in class, including respect for the opinions of other students and teachers."
+      ru: "Добавьте правила поведения на занятиях, включая уважение к мнению других студентов и преподавателей."
+      kk: "Сабақтағы мінез-құлық ережелерін, соның ішінде басқа студенттер мен оқытушылардың пікірін құрметтеуді қосыңыз."
+  "9.3":
+    problem:
+      en: "The attendance policy is missing or incomplete."
+      ru: "Политика посещаемости отсутствует или неполна."
+      kk: "Сабаққа қатысу саясаты жоқ немесе толық емес."
+    fix:
+      en: "State the attendance requirement, the threshold of permitted absences, and the consequence of exceeding it (no admission to the final assessment)."
+      ru: "Укажите требования к посещаемости, допустимый порог пропусков и последствие его превышения (недопуск к итоговой аттестации)."
+      kk: "Сабаққа қатысу талабын, рұқсат етілген босатулар шегін және одан асқандағы салдарын (қорытынды аттестацияға жіберілмеу) көрсетіңіз."
+  "9.4":
+    problem:
+      en: "The grading and feedback rules are not fully transparent or ethical."
+      ru: "Правила оценивания и обратной связи недостаточно прозрачны или этичны."
+      kk: "Бағалау және кері байланыс ережелері жеткілікті ашық немесе әдепті емес."
+    fix:
+      en: "Describe a transparent grading system and how feedback is given, and remove any wording that could be discriminatory."
+      ru: "Опишите прозрачную систему оценивания и порядок обратной связи и уберите формулировки, которые могут быть дискриминационными."
+      kk: "Ашық бағалау жүйесін және кері байланыс тәртібін сипаттаңыз, кемсітушілік болуы мүмкін тұжырымдарды алып тастаңыз."
+  "9.5":
+    problem:
+      en: "The syllabus has no way to correct errors or appeal a grade."
+      ru: "В силлабусе нет механизмов исправления ошибок и апелляции."
+      kk: "Силлабуста қателерді түзету және апелляция тетіктері жоқ."
+    fix:
+      en: "Describe how students can revise their work and appeal a grade, with reasonable deadlines."
+      ru: "Опишите, как студенты могут доработать свою работу и подать апелляцию на оценку, с разумными сроками."
+      kk: "Студенттердің жұмысын қалай түзете алатынын және бағаға апелляцияны қалай бере алатынын қисынды мерзімдерімен сипаттаңыз."

@@ -27,6 +27,7 @@ dependencies = [
     "google-auth>=2.30",
     "pyjwt[crypto]>=2.9",
     "fpdf2>=2.8",
+    "markitdown[docx,pdf]>=0.1.9",
 ]
 
 [dependency-groups]

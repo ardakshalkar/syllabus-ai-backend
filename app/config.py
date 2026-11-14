@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 180
     llm_max_retries: int = 3
     llm_output_language: str = "English"
+    # After a check, its explanations and recommendations are translated from LLM_OUTPUT_LANGUAGE into the
+    # app's other languages (English, Russian, Kazakh). TRANSLATION_MODEL names a model on the same server
+    # for that (e.g. a Gemini model on OpenRouter, stronger in Kazakh); empty: the chat model translates.
+    translation_model: str = ""
+    translate_results: bool = True
     # OpenRouter's key. LLM_PROVIDER=openrouter uses it when LLM_API_KEY is not set, and the decision model
     # always does, so one key in .env serves both.
     openrouter_api_key: str = ""
@@ -106,7 +111,10 @@ class Settings(BaseSettings):
     # are not Compliant. Empty: the chat model decides every status itself, one request per principle.
     decision_model: str = ""
     decision_url: str = "https://openrouter.ai/api/alpha/decisions"
-    checker_version: str = "2026.10"
+    checker_version: str = "2026.11"
+    # Read a syllabus as Markdown (markitdown) and have the chat model extract its outcomes, assessment, weeks
+    # and sections (app/ai/structure.py). Off, or when that fails: the line-based regex extraction.
+    structure_extraction: bool = True
     evidence_match_threshold: int = 85
 
     precheck_ttl_s: int = 3600

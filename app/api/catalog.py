@@ -496,6 +496,8 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
             .order_by(AssessmentRun.completed_at.desc())
         )
     ).all():
+        if folder_id is None or completed_at is None:  # the query filters these out; this tells the type checker
+            continue
         seen_sessions = sessions_seen.setdefault(folder_id, set())
         if session_id is None or session_id not in seen_sessions:
             check_count[folder_id] = check_count.get(folder_id, 0) + 1

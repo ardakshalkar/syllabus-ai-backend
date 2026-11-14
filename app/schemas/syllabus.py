@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.ai.types import CriterionResultData, TechnicalReport
+from app.ai.types import CriterionResultData, CriterionTexts, TechnicalReport
 from app.enums import AiStatus, ApprovalStage, CheckKind, RunStatus, Severity, Trigger, VersionSource
 from app.schemas.common import Schema
 
@@ -123,6 +123,10 @@ class CriterionResultOut(CriterionResultData):
     principle: int
     critical: bool = Field(default=False, description="the rubric marks this criterion critical")
     severity: Severity | None = Field(default=None, description="None when the result is no finding")
+    texts: CriterionTexts | None = Field(
+        default=None,
+        description="the reviewed problem and fix of this criterion in every language; None when not written",
+    )
 
 
 class RunResultsOut(RunOut):

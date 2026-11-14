@@ -194,6 +194,7 @@ async def _results(session: DbSession, run: AssessmentRun) -> RunResultsOut:
             principle=specs[r.criterion_id].principle,
             critical=specs[r.criterion_id].critical,
             severity=severity(r.status, specs[r.criterion_id].critical),
+            texts=specs[r.criterion_id].texts,
         )
         for r in doc.results
     ]

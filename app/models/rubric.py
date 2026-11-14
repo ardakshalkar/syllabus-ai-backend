@@ -50,3 +50,6 @@ class Criterion(UUIDPk, Base):
     # A finding on this criterion is critical. Only how results are reported depends on it, never how a
     # syllabus is checked, so it may change on an imported version (`app.cli set-critical`).
     critical: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    # {"problem": {"en": ..., "ru": ..., "kk": ...}, "fix": {...}}: the reviewed finding texts in every
+    # language (rubric/<code>.texts.yaml). Like `critical`, they change on an imported version (`set-texts`).
+    texts: Mapped[dict | None] = mapped_column(sa.JSON)

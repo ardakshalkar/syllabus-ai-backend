@@ -152,7 +152,9 @@ class _FakeDecider:
         self.asked = [s.code for s in specs]
         assert state and state[0].startswith("Syllabus:")
         return {
-            s.code: Decision(ResultStatus.not_compliant if s.code in self.failing else ResultStatus.compliant, 0.9)
+            s.code: Decision(
+                ResultStatus.not_compliant if s.code in self.failing else ResultStatus.compliant, 0.9
+            )
             for s in specs
             if s.code not in self.skip
         }
@@ -169,7 +171,7 @@ class _CountingProvider(FakeProvider):
         )
 
 
-async def test_decision_model_decides_and_chat_model_only_explains_failures(tmp_path):
+async def test_decision_model_decides_and_chat_model_cites_every_decision(tmp_path):
     content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=True)))
     decider = _FakeDecider(failing={"1.2", "6.1"})
     llm = _CountingProvider()
@@ -177,13 +179,16 @@ async def test_decision_model_decides_and_chat_model_only_explains_failures(tmp_
 
     assert len(output.results) == 49
     by_code = {r.criterion_id: r for r in output.results}
-    # Only the two failing criteria went to the chat model, each with its principle, and only to explain.
-    assert sorted(llm.calls) == [("explain", ["1.2"]), ("explain", ["6.1"])]
+    # Positive and negative decisions both require real evidence, grouped by principle.
+    assert all(purpose == "explain" for purpose, _ in llm.calls)
+    assert sorted(code for _, codes in llm.calls for code in codes) == sorted(decider.asked)
     assert by_code["6.1"].status == ResultStatus.not_compliant
     assert by_code["6.1"].evidence and by_code["6.1"].recommendation
     assert by_code["6.1"].confidence == 0.9
     passed = by_code["2.1"]
-    assert passed.status == ResultStatus.compliant and passed.evidence == "" and "decision model" in passed.explanation
+    assert passed.status == ResultStatus.compliant
+    assert passed.evidence and passed.evidence_verified is True
+    assert passed.recommendation == "No change suggested for this criterion."
     # Rules and missing external context are still decided without any model.
     assert "3.4" not in decider.asked and by_code["3.4"].status == ResultStatus.cannot_verify
     assert output.model_version == "fake-decider+fake-evaluator"
@@ -195,7 +200,10 @@ async def test_criteria_the_decision_model_skips_are_decided_by_the_chat_model(t
     output = await pipeline.evaluate(
         content, _specs(), llm, trace=False, decider=_FakeDecider(failing=set(), skip=frozenset({"6.1"}))
     )
-    assert llm.calls == [("criteria", ["6.1"])]
+    assert [(purpose, codes) for purpose, codes in llm.calls if purpose == "criteria"] == [
+        ("criteria", ["6.1"])
+    ]
+    assert any(purpose == "explain" and "2.1" in codes for purpose, codes in llm.calls)
     assert next(r for r in output.results if r.criterion_id == "6.1").status == ResultStatus.not_compliant
 
 
@@ -207,7 +215,9 @@ def test_decision_questions_and_answers_round_trip():
     assert set(questions) == {"c_1_2", "c_3_5"}
     assert questions["c_1_2"]["type"] == "choice"
     assert list(questions["c_1_2"]["criteria"]) == [s.value for s in ResultStatus]
-    parsed = parse_answers(specs, {"c_1_2": {"choice": "Partially compliant", "confidence": 0.7}, "c_3_5": {"choice": "?"}})
+    parsed = parse_answers(
+        specs, {"c_1_2": {"choice": "Partially compliant", "confidence": 0.7}, "c_3_5": {"choice": "?"}}
+    )
     assert set(parsed) == {"1.2"} and parsed["1.2"].status == ResultStatus.partial
 
 
@@ -246,3 +256,24 @@ def test_rubric_critical_flags_parse():
     flagged = [c.name for p in data.principles for c in p.criteria if c.critical]
     assert "Every learning outcome is assessed" in flagged
     assert len(flagged) == 7
+
+
+async def test_positive_decision_without_a_quote_cannot_pass(tmp_path):
+    class EmptyEvidenceProvider(_CountingProvider):
+        async def complete_json(self, **kwargs):
+            if kwargs["purpose"] == "evidence_repair":
+                return {"results": []}
+            data = await super().complete_json(**kwargs)
+            for item in data.get("results", []):
+                item["evidence"] = ""
+            return data
+
+    content = extract(_write(tmp_path, sample_syllabus("AI", with_issues=False)))
+    specs = [s for s in _specs() if s.code == "2.1"]
+    output = await pipeline.evaluate(
+        content, specs, EmptyEvidenceProvider(), trace=False, decider=_FakeDecider(failing=set())
+    )
+    result = output.results[0]
+    assert result.status == ResultStatus.cannot_verify
+    assert result.evidence_verified is False
+    assert result.confidence is None

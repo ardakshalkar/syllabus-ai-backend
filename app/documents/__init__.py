@@ -18,6 +18,8 @@ def _now() -> datetime:
 class ExtractedDocument(Document):
     version_id: UUID
     content: ExtractedContent
+    # Which extraction produced it (`structure.EXTRACTOR` or "lines"); a cached one from another is redone.
+    extractor: str = "lines"
     created_at: datetime = Field(default_factory=_now)
 
     class Settings:

@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from app.ai.types import CriterionTexts, ResultText
 from app.enums import ResultStatus, Severity
 from app.schemas.common import Schema
 from app.schemas.work import FrequentIssue
@@ -70,6 +71,10 @@ class ReportFinding(Schema):
     evidence: str
     explanation: str
     recommendation: str
+    translations: dict[str, ResultText] = Field(
+        default_factory=dict, description="explanation and recommendation by language code"
+    )
+    texts: CriterionTexts | None = None
 
 
 class ReportCourse(Schema):

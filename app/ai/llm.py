@@ -87,10 +87,10 @@ class _RetryableError(Exception):
 class _ChatProvider:
     """Retries, the concurrency limit and tracing. Subclasses only send one request (`_send`)."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None) -> None:
         s = get_settings()
-        self.model = s.llm_model
-        self.model_version = s.llm_model_version
+        self.model = model or s.llm_model
+        self.model_version = model or s.llm_model_version
         self.max_retries = s.llm_max_retries
 
     async def _send(
@@ -184,8 +184,8 @@ class _ChatProvider:
 class VllmProvider(_ChatProvider):
     """OpenAI chat API: vLLM, llama-server and OpenRouter."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, model: str | None = None) -> None:
+        super().__init__(model)
         s = get_settings()
         self.extra_body: dict[str, Any] = {} if s.llm_thinking else dict(_NO_THINKING.get(s.llm_provider, {}))
         if s.llm_provider == "openrouter":
@@ -235,8 +235,8 @@ class OllamaProvider(_ChatProvider):
     loads the model with the server's default context, which can be the model's maximum (262k for Qwen3):
     the KV cache then no longer fits on the GPU and every request runs several times slower."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, model: str | None = None) -> None:
+        super().__init__(model)
         s = get_settings()
         self.url = ollama_api_url(s.llm_base_url)
         self.think: bool | None = s.llm_thinking
@@ -305,3 +305,15 @@ def get_llm() -> LLMProvider:
     if provider == "ollama":
         return OllamaProvider()
     return VllmProvider()
+
+
+def get_translation_llm() -> LLMProvider:
+    """The model that translates finding texts: TRANSLATION_MODEL on the same server, or the chat model."""
+    s = get_settings()
+    if s.llm_provider == "fake":
+        from app.ai.fake import FakeProvider
+
+        return FakeProvider()
+    if s.llm_provider == "ollama":
+        return OllamaProvider(s.translation_model or None)
+    return VllmProvider(s.translation_model or None)
