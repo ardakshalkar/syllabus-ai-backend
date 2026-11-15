@@ -102,6 +102,7 @@ class SchoolCoverageOut(Schema):
     school_id: uuid.UUID
     semester: str
     checked: int  # syllabi of the School with a completed check this semester
+    aligned: int  # of them, those whose latest check compared them with programs (checks since 2026-11-15)
     programs: list[SchoolCoverageRow]
 
 

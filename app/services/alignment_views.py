@@ -263,4 +263,10 @@ async def school_coverage(
                 courses_known=known,
             )
         )
-    return out.SchoolCoverageOut(school_id=school_id, semester=semester, checked=len(own), programs=rows)
+    return out.SchoolCoverageOut(
+        school_id=school_id,
+        semester=semester,
+        checked=len(own),
+        aligned=sum(1 for s in own if s.basis),
+        programs=rows,
+    )

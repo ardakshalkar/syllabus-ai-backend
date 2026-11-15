@@ -181,6 +181,7 @@ async def test_coverage_of_a_program_and_a_school(ref, client_for):
 
     admin = client_for(ref["users"]["admin.digital"])
     school = (await admin.get(f"/alignment/schools/{ref['schools']['digital'].id}?semester=Fall 2026")).json()
+    assert school["checked"] == school["aligned"] == 1
     row = next(r for r in school["programs"] if r["program"]["code"] == "6B06191")
     assert (
         row["outcome_count"] == 3
