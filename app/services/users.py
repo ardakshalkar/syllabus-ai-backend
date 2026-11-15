@@ -94,7 +94,10 @@ async def add_user(
             school_id = found.id
         else:
             program_id = await session.scalar(
-                sa.select(Program.id).where(Program.school_id == found.id).order_by(Program.name).limit(1)
+                sa.select(Program.id)
+                .where(Program.school_id == found.id)
+                .order_by(Program.code.is_not(None), Program.name)
+                .limit(1)
             )
             if program_id is None:
                 raise UserError(f"{found.name} has no Program (run setup-schools)")

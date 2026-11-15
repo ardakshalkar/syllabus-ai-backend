@@ -55,7 +55,8 @@ async def setup_schools(session: AsyncSession) -> list[tuple[str, bool]]:
             school = School(slug=slug, name=name)
             session.add(school)
             await session.flush()
-        if not await session.scalar(sa.select(Program.id).where(Program.school_id == school.id).limit(1)):
+        placeholder = sa.select(Program.id).where(Program.school_id == school.id, Program.code.is_(None))
+        if not await session.scalar(placeholder.limit(1)):
             session.add(
                 Program(slug=f"{slug}-programs", name=name, school_id=school.id, degree_level="Not set")
             )
@@ -122,7 +123,10 @@ async def add_demo_users(
         admin.department = name
         _grant(admin, Role.school_admin, report, school=school)
         program = await session.scalar(
-            sa.select(Program).where(Program.school_id == school.id).order_by(Program.name).limit(1)
+            sa.select(Program)
+            .where(Program.school_id == school.id)
+            .order_by(Program.code.is_not(None), Program.name)
+            .limit(1)
         )
         if program is not None:
             head = await _user(session, f"head.{key}@{domain}", f"Head of Program · {name}", None, report)

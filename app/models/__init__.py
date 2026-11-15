@@ -1,5 +1,15 @@
 from app.models.base import Base
-from app.models.org import Course, Program, RoleAssignment, School, UploadFolder, User, course_instructors
+from app.models.org import (
+    Course,
+    Program,
+    ProgramDiscipline,
+    ProgramOutcome,
+    RoleAssignment,
+    School,
+    UploadFolder,
+    User,
+    course_instructors,
+)
 from app.models.rubric import Criterion, Principle, RubricVersion
 from app.models.semester import Semester
 from app.models.syllabus import AssessmentRun, CriterionOutcome, Syllabus, SyllabusVersion
@@ -16,6 +26,8 @@ __all__ = [
     "Notification",
     "Principle",
     "Program",
+    "ProgramDiscipline",
+    "ProgramOutcome",
     "ReviewReport",
     "RoleAssignment",
     "RubricVersion",

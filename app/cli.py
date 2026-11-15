@@ -2,7 +2,7 @@
 `python -m app.cli create-db`, `python -m app.cli drive-check`, `python -m app.cli drive-setup <shared folder id>`,
 `python -m app.cli setup-schools`, `python -m app.cli add-test-users [--password]`,
 `python -m app.cli set-password EMAIL`, `python -m app.cli bootstrap` (Schools, rubric and test users at once),
-`python -m app.cli import-users users.csv`."""
+`python -m app.cli import-users users.csv`, `python -m app.cli import-programs [--dry-run] [--code 6B04103]`."""
 
 import argparse
 import asyncio
@@ -291,6 +291,34 @@ async def _create_db() -> None:
         await conn.close()
 
 
+async def _import_programs(codes: list[str], dry_run: bool) -> None:
+    """Educational programs with their learning outcomes and disciplines, from narxoz.edu.kz (idempotent)."""
+    import httpx
+
+    from app.services import program_import as pi
+
+    wanted = {pi.normalize_code(c) for c in codes} or None
+    headers = {"User-Agent": "syllabus-checker program import", "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=30, headers=headers, follow_redirects=True) as client:
+        site, failed = await pi.fetch_site_programs(client, wanted)
+    print(f"read {len(site)} programs from narxoz.edu.kz")
+    for slug, error in failed:
+        print(f"  could not read {pi.page_url(slug)}: {error}")
+    async with pg.session_scope() as session:
+        report = await pi.import_programs(session, site)
+        if dry_run:
+            await session.rollback()
+    verb = "would be" if dry_run else ""
+    print(f"created {len(report.created)}, updated {len(report.updated)} {verb}".rstrip())
+    print(f"  {report.outcomes} learning outcomes, {report.disciplines} disciplines")
+    for code, school in report.school_inferred:
+        print(f"  {code}: the site gives no School; filed under {school} (same field of study)")
+    for code, reason in report.skipped:
+        print(f"  skipped {code}: {reason}")
+    if failed:
+        raise SystemExit(1)
+
+
 async def _main(args: argparse.Namespace) -> None:
     await init_mongo()
     try:
@@ -318,6 +346,8 @@ async def _main(args: argparse.Namespace) -> None:
             await _bootstrap(args)
         elif args.command == "add-test-users":
             await _add_test_users(args.instructor, _read_password(args.password), args.allow_prod)
+        elif args.command == "import-programs":
+            await _import_programs(args.code, args.dry_run)
         elif args.command == "drive-check":
             if not await _drive_check(args.folder, args.write):
                 raise SystemExit(1)
@@ -442,6 +472,14 @@ def main() -> None:
     )
     boot.add_argument("--instructor", action="store_true", help="as add-test-users --instructor")
     boot.add_argument("--allow-prod", action="store_true", help="as add-test-users --allow-prod")
+    programs = sub.add_parser(
+        "import-programs",
+        help="read the educational programs, their learning outcomes and disciplines from narxoz.edu.kz",
+    )
+    programs.add_argument(
+        "--code", action="append", default=[], metavar="CODE", help="only this program, e.g. 6B04103 (repeat)"
+    )
+    programs.add_argument("--dry-run", action="store_true", help="read and report, change nothing")
     check = sub.add_parser(
         "drive-check", help="check the Google Drive credentials and folders (GOOGLE_DRIVE_SETUP.md)"
     )

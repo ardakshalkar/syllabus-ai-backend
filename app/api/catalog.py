@@ -47,6 +47,7 @@ from app.schemas.catalog import (
     FolderReadOut,
     IntegrationsOut,
     ProfessorOut,
+    ProgramDetailOut,
     ProgramIn,
     ProgramOut,
     ResponsibleOut,
@@ -62,17 +63,6 @@ from app.storage.drive import GONE_HINT, explain_folder_error, folder_exists, sh
 router = APIRouter(tags=["catalog"])
 
 
-def _program_out(program: Program) -> ProgramOut:
-    return ProgramOut(
-        id=program.id,
-        slug=program.slug,
-        name=program.name,
-        school_id=program.school_id,
-        degree_level=program.degree_level,
-        has_passport=bool(program.passport_text),
-    )
-
-
 @router.get("/schools", response_model=list[SchoolOut])
 async def schools(_: CurrentUser, session: DbSession):
     return list(await session.scalars(sa.select(School).order_by(School.name)))
@@ -83,8 +73,16 @@ async def programs(_: CurrentUser, session: DbSession, school_id: uuid.UUID | No
     query = sa.select(Program).order_by(Program.name)
     if school_id:
         query = query.where(Program.school_id == school_id)
-    # has_passport is derived, not a column, so model_validate on the ORM object cannot supply it.
-    return [_program_out(p) for p in await session.scalars(query)]
+    return [ProgramOut.of(p) for p in await session.scalars(query)]
+
+
+@router.get("/programs/{program_id}", response_model=ProgramDetailOut)
+async def program(program_id: uuid.UUID, _: CurrentUser, session: DbSession):
+    """A program with its learning outcomes and disciplines (imported from narxoz.edu.kz)."""
+    found = await session.get(Program, program_id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Program not found")
+    return ProgramDetailOut.of(found)
 
 
 @router.get("/courses", response_model=list[CourseOut])
@@ -154,10 +152,12 @@ async def create_program(body: ProgramIn, principal: CurrentUser, session: DbSes
         school_id=body.school_id,
         degree_level=body.degree_level.strip(),
         passport_text=body.passport_text,
+        outcomes=[],  # set, so ProgramOut.of does not lazy-load them (no implicit IO under asyncio)
+        disciplines=[],
     )
     session.add(program)
     await _commit(session, "A program with this slug already exists")
-    return _program_out(program)
+    return ProgramOut.of(program)
 
 
 @router.post("/courses", response_model=CourseOut, status_code=status.HTTP_201_CREATED)

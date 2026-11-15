@@ -39,6 +39,58 @@ class ProgramOut(Schema):
     school_id: uuid.UUID
     degree_level: str
     has_passport: bool
+    # Set for a program imported from narxoz.edu.kz; None for a School's placeholder program.
+    code: str | None = None
+    site_url: str | None = None
+    outcome_count: int = 0
+    imported_at: datetime | None = None
+
+    @classmethod
+    def of(cls, program) -> "ProgramOut":
+        """has_passport, site_url and outcome_count are derived, so model_validate on the ORM object cannot supply
+        them."""
+        from app.services.program_import import page_url
+
+        return cls(
+            id=program.id,
+            slug=program.slug,
+            name=program.name,
+            school_id=program.school_id,
+            degree_level=program.degree_level,
+            has_passport=bool(program.passport_text),
+            code=program.code,
+            site_url=page_url(program.site_slug) if program.site_slug else None,
+            outcome_count=len(program.outcomes),
+            imported_at=program.imported_at,
+        )
+
+
+class ProgramOutcomeOut(Schema):
+    number: int
+    text: dict[str, str]  # {"ru": ..., "kk": ..., "en": ...}; a language may be missing
+
+
+class ProgramDisciplineOut(Schema):
+    number: int
+    name: dict[str, str]
+    is_profile: bool
+
+
+class ProgramDetailOut(ProgramOut):
+    titles: dict[str, str] | None = None
+    goal: dict[str, str] | None = None
+    outcomes: list[ProgramOutcomeOut] = []
+    disciplines: list[ProgramDisciplineOut] = []
+
+    @classmethod
+    def of(cls, program) -> "ProgramDetailOut":
+        return cls(
+            **ProgramOut.of(program).model_dump(),
+            titles=program.titles,
+            goal=program.goal,
+            outcomes=[ProgramOutcomeOut.model_validate(o) for o in program.outcomes],
+            disciplines=[ProgramDisciplineOut.model_validate(d) for d in program.disciplines],
+        )
 
 
 class CourseIn(Schema):

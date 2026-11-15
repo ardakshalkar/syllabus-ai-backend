@@ -454,8 +454,13 @@ async def sync_folder(folder_id: uuid.UUID, *, reuse_listing_s: float = 0) -> Sy
             raise LookupError("folder not found")
         school = await session.get(School, folder.school_id)
         assert school is not None
+        # The School's placeholder program (no code), never one imported from narxoz.edu.kz: which real
+        # programs a Drive course belongs to is decided separately, and a course can belong to several.
         program_id = await session.scalar(
-            sa.select(Program.id).where(Program.school_id == school.id).order_by(Program.name).limit(1)
+            sa.select(Program.id)
+            .where(Program.school_id == school.id)
+            .order_by(Program.code.is_not(None), Program.name)
+            .limit(1)
         )
         report = SyncReport(str(folder.id), school.name, folder.semester, folder.drive_folder_id)
         root = folder.drive_folder_id

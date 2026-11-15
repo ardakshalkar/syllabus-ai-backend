@@ -225,3 +225,22 @@ async def test_sync_api_respects_the_schools(ref, client_for):
     assert all(f["school_id"] == str(digital) for f in status["folders"])  # only their School
     kok = client_for(ref["users"]["kok"])
     assert (await kok.post("/drive/sync", json={})).status_code == 202
+
+
+async def test_drive_courses_never_go_to_an_imported_program(ref):
+    """A program imported from narxoz.edu.kz (it has a code) sorts first by name, yet Drive courses stay with the
+    School's own program: which real programs a course belongs to is decided separately."""
+    from app.models import Program
+
+    async with pg.session_scope() as session:
+        session.add(
+            Program(
+                slug="6b06101",
+                code="6B06101",
+                name="AAA Applied AI",
+                school_id=ref["schools"]["digital"].id,
+                degree_level="Bachelor",
+            )
+        )
+    await drive_catalog.sync_folder(await _link(ref, _school_folder()))
+    assert {c.program_id for _, c in await _drive_syllabi()} == {ref["programs"]["cs"].id}

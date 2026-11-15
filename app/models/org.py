@@ -65,6 +65,50 @@ class Program(UUIDPk, Base):
     # Educational Program Passport text; criterion 3.4 can only be verified when it is present.
     passport_text: Mapped[str | None] = mapped_column(sa.Text)
 
+    # Set for a program imported from narxoz.edu.kz (`python -m app.cli import-programs`); None for a School's
+    # placeholder program, which is where courses read from Google Drive are filed.
+    code: Mapped[str | None] = mapped_column(sa.String(20), unique=True)  # e.g. 6B04103, always Latin letters
+    site_slug: Mapped[str | None] = mapped_column(sa.String(200))  # narxoz.edu.kz/program/<site_slug>
+    titles: Mapped[dict | None] = mapped_column(sa.JSON)  # {"ru": ..., "kk": ..., "en": ...}
+    goal: Mapped[dict | None] = mapped_column(sa.JSON)  # the program's goal, same shape
+    imported_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    outcomes: Mapped[list["ProgramOutcome"]] = relationship(
+        order_by="ProgramOutcome.number", cascade="all, delete-orphan", lazy="selectin"
+    )
+    disciplines: Mapped[list["ProgramDiscipline"]] = relationship(
+        order_by="ProgramDiscipline.number", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class ProgramOutcome(UUIDPk, Base):
+    """One learning outcome of an educational program (РО ОП n), in the three languages."""
+
+    __tablename__ = "program_outcomes"
+    __table_args__ = (sa.UniqueConstraint("program_id", "number"),)
+
+    program_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("programs.id", ondelete="CASCADE"), index=True
+    )
+    number: Mapped[int]  # 1-based, as the program lists them
+    text: Mapped[dict] = mapped_column(
+        sa.JSON
+    )  # {"ru": ..., "kk": ..., "en": ...}; a language may be missing
+
+
+class ProgramDiscipline(UUIDPk, Base):
+    """A course the program lists on its page; later used to tell which programs a syllabus belongs to."""
+
+    __tablename__ = "program_disciplines"
+    __table_args__ = (sa.UniqueConstraint("program_id", "number"),)
+
+    program_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("programs.id", ondelete="CASCADE"), index=True
+    )
+    number: Mapped[int]
+    name: Mapped[dict] = mapped_column(sa.JSON)  # {"ru": ..., "kk": ..., "en": ...}
+    is_profile: Mapped[bool] = mapped_column(default=False)
+
 
 class Course(UUIDPk, Base):
     __tablename__ = "courses"

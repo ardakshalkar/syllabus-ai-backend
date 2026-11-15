@@ -189,15 +189,7 @@ async def delete_school(school_id: uuid.UUID, _: Admin, session: DbSession) -> R
 
 @router.patch("/programs/{program_id}", response_model=ProgramOut)
 async def update_program(program_id: uuid.UUID, body: ProgramPatch, _: Admin, session: DbSession):
-    p = await admin.update_program(session, program_id, body)
-    return ProgramOut(
-        id=p.id,
-        slug=p.slug,
-        name=p.name,
-        school_id=p.school_id,
-        degree_level=p.degree_level,
-        has_passport=bool(p.passport_text),
-    )
+    return ProgramOut.of(await admin.update_program(session, program_id, body))
 
 
 @router.delete("/programs/{program_id}", status_code=status.HTTP_204_NO_CONTENT)
