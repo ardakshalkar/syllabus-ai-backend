@@ -28,7 +28,7 @@ from app.services import program_links
 def graded(basis: str | None, count: int) -> bool:
     if basis in (ProgramBasis.manual, ProgramBasis.declared):
         return count > 0
-    return basis == ProgramBasis.name and count == 1
+    return basis in (ProgramBasis.folder, ProgramBasis.name) and count == 1
 
 
 def ref(p: Program) -> out.ProgramRef:

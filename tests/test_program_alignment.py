@@ -200,3 +200,69 @@ async def test_coverage_of_a_program_and_a_school(ref, client_for):
 
     outsider = client_for(ref["users"]["karimova"])  # a professor of another School
     assert (await outsider.get(f"/alignment/programs/{program.id}?semester=Fall 2026")).status_code == 403
+
+
+def test_program_folders_name_their_program():
+    from types import SimpleNamespace as P
+
+    from app.services.program_links import FolderIndex
+
+    law, other = "law", "other"
+    programs = [
+        P(
+            id="mo",
+            code="6B03104",
+            name="Международные отношения",
+            titles=None,
+            school_id=law,
+            degree_level="Bachelor",
+        ),
+        P(
+            id="gimu",
+            code="6B04125",
+            name="Государственное и местное управление",
+            titles=None,
+            school_id=law,
+            degree_level="Bachelor",
+        ),
+        P(
+            id="gimu-m",
+            code="7M04101",
+            name="Государственное и местное управление",
+            titles=None,
+            school_id=law,
+            degree_level="Master",
+        ),
+        P(
+            id="mp",
+            code="6B04202",
+            name="Международное право",
+            titles=None,
+            school_id=law,
+            degree_level="Bachelor",
+        ),
+        P(
+            id="jur",
+            code="6B04203",
+            name="Юриспруденция",
+            titles=None,
+            school_id=law,
+            degree_level="Bachelor",
+        ),
+        P(
+            id="it",
+            code="6B06301",
+            name="Кибербезопасность",
+            titles=None,
+            school_id=other,
+            degree_level="Bachelor",
+        ),
+    ]
+    index = FolderIndex(programs)  # type: ignore[arg-type]
+    assert index.match("ОП МО", "ОП МО · Syllabus MMPG323", law) == {"mo"}
+    assert index.match("ОП ГиМУ", "ОП ГиМУ · PMGO", law) == {"gimu"}
+    assert index.match("ОП ГиМУ", "ОП ГиМУ · Магистратура МБЖСҚ", law) == {"gimu-m"}
+    # A group of programs: every program of its field of study, Юриспруденция included.
+    assert index.match("ГОП Право", "ГОП Право · Силлабус УПП", law) == {"mp", "jur"}
+    # A course folder is never read as a program, even when a program has that word.
+    assert index.match("Кибербезопасность", "Кибербезопасность · Syllabus", other) == set()

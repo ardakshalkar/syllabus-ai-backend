@@ -12,6 +12,7 @@ class LinkSource(StrEnum):
 
     manual = "manual"  # set by the School (or the Provost Office) on the course
     declared = "declared"  # the syllabus names the program's code (e.g. 6B04103)
+    folder = "folder"  # the School keeps it in a Drive folder named after the program ("ОП МО", "ГОП Право")
     name = "name"  # the course's name is on the program's list of courses on narxoz.edu.kz
 
 
@@ -20,6 +21,7 @@ class ProgramBasis(StrEnum):
 
     manual = "manual"
     declared = "declared"
+    folder = "folder"
     name = "name"
     school = "school"  # nothing ties the course to a program: every program of its School was a candidate
 

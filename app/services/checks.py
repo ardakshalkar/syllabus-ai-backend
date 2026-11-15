@@ -162,6 +162,11 @@ async def program_context(
                     "it is not known which educational program this course belongs to: its name is on the "
                     f"course lists of {len(found.programs)} programs ({_codes(found.programs)})"
                 )
+            elif found.basis == ProgramBasis.folder:
+                why = (
+                    "it is not known which educational program this course belongs to: its Drive folder names a "
+                    f"group of {len(found.programs)} programs ({_codes(found.programs)})"
+                )
             else:
                 why = (
                     "the syllabus does not name its educational program and the course is on no program's "
