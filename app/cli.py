@@ -308,8 +308,12 @@ async def _import_programs(codes: list[str], dry_run: bool) -> None:
         report = await pi.import_programs(session, site)
         if dry_run:
             await session.rollback()
-    verb = "would be" if dry_run else ""
-    print(f"created {len(report.created)}, updated {len(report.updated)} {verb}".rstrip())
+    head = "dry run, nothing saved: would create" if dry_run else "created"
+    print(
+        f"{head} {len(report.created)}, update {len(report.updated)}"
+        if dry_run
+        else f"{head} {len(report.created)}, updated {len(report.updated)}"
+    )
     print(f"  {report.outcomes} learning outcomes, {report.disciplines} disciplines")
     for code, school in report.school_inferred:
         print(f"  {code}: the site gives no School; filed under {school} (same field of study)")
