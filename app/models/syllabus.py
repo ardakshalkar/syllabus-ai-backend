@@ -82,6 +82,9 @@ class AssessmentRun(UUIDPk, CreatedAt, Base):
     completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(sa.Text)
     created_by: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id"))
+    # The programs the check compared the syllabus with, and why those (app.models.alignment.ProgramBasis).
+    program_basis: Mapped[str | None] = mapped_column(sa.String(20))
+    program_ids: Mapped[list[str] | None] = mapped_column(sa.JSON)
 
 
 class CriterionOutcome(Base):

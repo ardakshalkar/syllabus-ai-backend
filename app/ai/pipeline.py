@@ -73,11 +73,15 @@ async def _noop(_: Progress) -> None:
 _FROM_SETTINGS = object()
 
 
-def _state(content: ExtractedContent, report: TechnicalReport) -> list[str]:
-    """What the decision model reads: the syllabus, and the structure findings the chat model is also given."""
+def _state(
+    content: ExtractedContent, report: TechnicalReport, context: dict[str, str] | None = None
+) -> list[str]:
+    """What the decision model reads: the syllabus, the structure findings the chat model is also given, and
+    the external context (the program's outcomes) that criteria such as 3.4 are judged against."""
     state = [f"Syllabus:\n{document_text(content)}"]
     if report.issues:
         state.append(STRUCTURE_HINTS + "\n".join(f"- {i.message}" for i in report.issues))
+    state += [f"{name}:\n{text}" for name, text in (context or {}).items() if text]
     return state
 
 
@@ -85,15 +89,18 @@ def _by_principle(specs: list[CriterionSpec]) -> list[list[CriterionSpec]]:
     return [list(g) for _, g in groupby(sorted(specs, key=lambda s: s.principle), key=lambda s: s.principle)]
 
 
-def _cannot_verify(spec: CriterionSpec, why: str) -> CriterionResultData:
+def _cannot_verify(spec: CriterionSpec, why: str, recommendation: str = "") -> CriterionResultData:
     return CriterionResultData(
         criterion_id=spec.code,
         status=ResultStatus.cannot_verify,
         evidence="",
         explanation=f"Cannot verify this criterion because {why}.",
-        recommendation=f"Connect the {spec.required_context} and run this criterion again."
-        if spec.required_context
-        else "Run this criterion again.",
+        recommendation=recommendation
+        or (
+            f"Connect the {spec.required_context} and run this criterion again."
+            if spec.required_context
+            else "Run this criterion again."
+        ),
         required_context=spec.required_context,
         confidence=None,
     )
@@ -106,6 +113,7 @@ async def evaluate(
     *,
     checks: frozenset[CheckKind] | set[CheckKind] = ALL_CHECKS,
     context: dict[str, str] | None = None,
+    unavailable: dict[str, tuple[str, str]] | None = None,
     run_id: uuid.UUID | None = None,
     trace: bool = True,
     on_phase: Phase = _noop,
@@ -116,7 +124,8 @@ async def evaluate(
     (`llm`) writes evidence and explanations for every decision, including Compliant. Without one,
     the chat model does both, one request per principle.
 
-    `library_report` (library.check_literature) decides the library criterion by rule, without a model."""
+    `library_report` (library.check_literature) decides the library criterion by rule, without a model.
+    `unavailable`: for a context that is missing for a known reason, (why, what to do) for its criteria."""
     settings = get_settings()
     context = context or {}
     dm = cast("DecisionMaker | None", get_decider() if decider is _FROM_SETTINGS else decider)
@@ -138,6 +147,9 @@ async def evaluate(
                 results[spec.code] = library.criterion_result(spec, library_report)
             elif enabled and context.get(spec.required_context):
                 to_llm.append(spec)
+            elif enabled and spec.required_context in (unavailable or {}):
+                why, recommendation = (unavailable or {})[spec.required_context]
+                results[spec.code] = _cannot_verify(spec, why, recommendation)
             else:
                 results[spec.code] = _cannot_verify(spec, f"the {spec.required_context} is unavailable")
         elif CheckKind.criteria in checks:
@@ -147,7 +159,7 @@ async def evaluate(
     if dm is not None and to_llm:
         progress = Progress(CRITERIA, criteria_total=len(specs), running=["All criteria (decision model)"])
         await on_phase(progress)
-        decisions = await dm.decide(_state(content, report), to_llm, run_id=run_id, trace=trace)
+        decisions = await dm.decide(_state(content, report, context), to_llm, run_id=run_id, trace=trace)
     # Every model decision needs a cited passage, including Compliant decisions. Undecided criteria
     # (no decision model, or it skipped a criterion) are still decided by the chat model.
     to_explain = [s for s in to_llm if s.code in decisions]

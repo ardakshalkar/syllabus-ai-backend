@@ -8,7 +8,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import sqlalchemy as sa
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +17,6 @@ from app.ai.llm import get_llm
 from app.auth.rbac import Principal, ensure_course_lead
 from app.config import get_settings
 from app.db.pg import session_scope
-from app.models import Course, Program
 from app.services import run_progress
 from app.services.rubric import load_rubric
 from app.services.syllabi import validate_upload
@@ -92,24 +90,21 @@ async def run_job(job_id: str) -> bool:
         await _update(job_id, status="Processing", phase="Reading document", live=live)
         async with session_scope() as session:
             rubric = await load_rubric(session)
-            passport = await session.scalar(
-                sa.select(Program.passport_text)
-                .join(Course, Course.program_id == Program.id)
-                .where(Course.id == uuid.UUID(state["course_id"]))
-            )
         content, _ = await structure.read_syllabus(path, get_llm())
+        from app.services.checks import literature_in_library, program_context
+
+        programs = await program_context(uuid.UUID(state["course_id"]), content, record=False)
 
         async def on_phase(progress: pipeline.Progress) -> None:
             run_progress.apply(live, progress)
             await _update(job_id, phase=progress.phase, live=live)
 
-        from app.services.checks import literature_in_library
-
         output = await pipeline.evaluate(
             content,
             rubric.specs,
             get_llm(),
-            context={"Educational Program Passport": passport} if passport else {},
+            context=programs.context,
+            unavailable=programs.unavailable,
             trace=False,
             on_phase=on_phase,
             library_report=await literature_in_library(content),

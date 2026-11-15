@@ -426,6 +426,13 @@ async def _apply(
         else:
             report.updated += 1
 
+    # Which programs list these courses (narxoz.edu.kz course lists); new and renamed courses may change.
+    from app.services import program_links
+
+    if by_slug:
+        ids = await session.scalars(sa.select(Course.id).where(Course.slug.in_(list(by_slug))))
+        await program_links.link_by_name(session, list(ids))
+
     # Files that left the folder: their syllabi stay with their results, hidden from lists.
     gone = await session.scalars(
         sa.select(Syllabus)

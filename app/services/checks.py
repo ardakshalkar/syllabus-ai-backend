@@ -2,15 +2,17 @@ import logging
 import time
 import uuid
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import pipeline, structure
+from app.ai import alignment, pipeline, structure
 from app.ai.extraction import ExtractionError
 from app.ai.llm import get_llm
-from app.ai.types import EvaluationOutput, ExtractedContent
+from app.ai.types import EvaluationOutput, ExtractedContent, language_code
+from app.config import get_settings
 from app.db.pg import session_scope
 from app.documents import AssessmentResultDoc, ExtractedDocument
 from app.enums import (
@@ -32,13 +34,15 @@ from app.models import (
     Course,
     Criterion,
     CriterionOutcome,
+    OutcomeLink,
     Program,
+    ProgramBasis,
     RubricVersion,
     SessionItem,
     Syllabus,
     SyllabusVersion,
 )
-from app.services import drive_catalog, run_live, run_progress, translations
+from app.services import drive_catalog, program_links, run_live, run_progress, translations
 from app.services.notifications import notify
 from app.services.rubric import load_rubric
 from app.storage import files
@@ -100,13 +104,75 @@ async def load_content(version: SyllabusVersion) -> ExtractedContent:
     return content
 
 
-async def _context_for(session: AsyncSession, syllabus: Syllabus) -> dict[str, str]:
-    passport = await session.scalar(
-        sa.select(Program.passport_text)
-        .join(Course, Course.program_id == Program.id)
-        .where(Course.id == syllabus.course_id)
-    )
-    return {"Educational Program Passport": passport} if passport else {}
+PASSPORT = "Educational Program Passport"
+
+
+@dataclass
+class ProgramContext:
+    """The programs a check compares the syllabus with (app.services.program_links), and what that gives it."""
+
+    basis: ProgramBasis | None = None
+    program_ids: list[str] = field(default_factory=list)
+    context: dict[str, str] = field(
+        default_factory=dict
+    )  # for criteria 3.2 and 3.4, when the program is known
+    unavailable: dict[str, tuple[str, str]] = field(default_factory=dict)  # why not, when it is not
+    programs: list[alignment.ProgramOutcomes] = field(default_factory=list)  # for the outcome links
+    outcome_ids: dict[tuple[str, int], uuid.UUID] = field(
+        default_factory=dict
+    )  # (program code, number) -> id
+
+
+def _codes(programs: list[Program], most: int = 4) -> str:
+    codes = [p.code or p.name for p in programs]
+    return ", ".join(codes[:most]) + (f" and {len(codes) - most} more" if len(codes) > most else "")
+
+
+async def program_context(
+    course_id: uuid.UUID, content: ExtractedContent, *, record: bool = True
+) -> ProgramContext:
+    """Records the program codes the syllabus names (unless `record` is off: a pre-check stores nothing),
+    then picks the programs to compare it with."""
+    language = language_code(content.language or "")
+    async with session_scope() as session:
+        course = await session.get(Course, course_id)
+        assert course is not None
+        if record:
+            await program_links.record_declared(session, course.id, content.raw_text)
+            found = await program_links.candidates(session, course)
+        else:
+            found = await program_links.candidates(session, course, text=content.raw_text)
+        out = ProgramContext(basis=found.basis, program_ids=[str(p.id) for p in found.programs])
+        for p in found.programs:
+            assert p.code is not None
+            out.programs.append(
+                alignment.ProgramOutcomes(
+                    p.code, {o.number: program_links.pick(o.text, language) for o in p.outcomes}
+                )
+            )
+            out.outcome_ids.update({(p.code, o.number): o.id for o in p.outcomes})
+        legacy = await session.scalar(sa.select(Program.passport_text).where(Program.id == course.program_id))
+        if found.graded:
+            out.context[PASSPORT] = program_links.passport(found.programs, language)
+        elif legacy:
+            out.context[PASSPORT] = legacy  # a passport pasted on the course's program by hand
+        elif found.programs:
+            if found.basis == ProgramBasis.name:
+                why = (
+                    "it is not known which educational program this course belongs to: its name is on the "
+                    f"course lists of {len(found.programs)} programs ({_codes(found.programs)})"
+                )
+            else:
+                why = (
+                    "the syllabus does not name its educational program and the course is on no program's "
+                    "list of courses"
+                )
+            out.unavailable[PASSPORT] = (
+                why,
+                "Name the educational program in the syllabus by its code (for example 6B04103), or ask the "
+                "School to set the course's program, and run the check again.",
+            )
+    return out
 
 
 async def literature_in_library(content: ExtractedContent) -> library.LibraryReport | None:
@@ -166,7 +232,7 @@ async def execute_run(run_id: uuid.UUID) -> None:
         syllabus = await session.get(Syllabus, version.syllabus_id)
         assert syllabus is not None
         rubric = await load_rubric(session, run.rubric_version_id)
-        context = await _context_for(session, syllabus)
+        course_id = syllabus.course_id
         checks = frozenset(CheckKind(c) for c in run.checks)
         live = await run_live.claim(run_id, "Reading document")
 
@@ -184,12 +250,14 @@ async def execute_run(run_id: uuid.UUID) -> None:
             version = await drive_catalog.follow_drive(run_id, version)
             content = await load_content(version)
             library_report = await literature_in_library(content) if CheckKind.library in checks else None
+            programs = await program_context(course_id, content)
             output = await pipeline.evaluate(
                 content,
                 rubric.specs,
                 get_llm(),
                 checks=checks,
-                context=context,
+                context=programs.context,
+                unavailable=programs.unavailable,
                 run_id=run_id,
                 on_phase=on_phase,
                 library_report=library_report,
@@ -209,6 +277,19 @@ async def execute_run(run_id: uuid.UUID) -> None:
             await _fail(run_id, f"{type(exc).__name__}: {exc}", AiStatus.not_checked)
             return
 
+        links: list[alignment.Link] = []
+        if CheckKind.program_alignment in checks and programs.programs:
+            try:  # information for the School, never a reason to fail the check
+                links = await alignment.align(
+                    get_llm(),
+                    content,
+                    programs.programs,
+                    language=get_settings().llm_output_language,
+                    run_id=run_id,
+                )
+            except Exception:
+                log.exception("check run %s: program outcome links failed", run_id)
+
         output.results = await translations.translate(output.results, run_id)
 
         # Still under the lease, so recover_stale_runs cannot requeue the run between these writes.
@@ -216,7 +297,14 @@ async def execute_run(run_id: uuid.UUID) -> None:
         await AssessmentResultDoc(
             run_id=run_id, version_id=version.id, technical=output.technical, results=output.results
         ).insert()
-        await _complete(run_id, output, rubric.criterion_ids, {s.code for s in rubric.specs if s.critical})
+        await _complete(
+            run_id,
+            output,
+            rubric.criterion_ids,
+            {s.code for s in rubric.specs if s.critical},
+            programs,
+            links,
+        )
         log.info("check run %s completed in %.0fs", run_id, time.monotonic() - started)
         try:
             await run_progress.record_pace(live.state)
@@ -325,7 +413,12 @@ async def refresh_ai_status(session: AsyncSession, syllabus: Syllabus) -> None:
 
 
 async def _complete(
-    run_id: uuid.UUID, output: EvaluationOutput, criterion_ids: dict[str, uuid.UUID], critical: set[str]
+    run_id: uuid.UUID,
+    output: EvaluationOutput,
+    criterion_ids: dict[str, uuid.UUID],
+    critical: set[str],
+    programs: ProgramContext | None = None,
+    links: list[alignment.Link] | None = None,
 ) -> None:
     from app.services.sessions import on_run_finished
 
@@ -350,6 +443,21 @@ async def _complete(
             CriterionOutcome(run_id=run_id, criterion_id=criterion_ids[r.criterion_id], status=r.status)
             for r in output.results
         )
+        await session.execute(sa.delete(OutcomeLink).where(OutcomeLink.run_id == run_id))
+        if programs is not None:
+            run.program_basis = programs.basis.value if programs.basis else None
+            run.program_ids = programs.program_ids
+            session.add_all(
+                OutcomeLink(
+                    run_id=run_id,
+                    program_outcome_id=programs.outcome_ids[(link.program, link.outcome)],
+                    course_outcome=link.course_outcome,
+                    course_outcome_text=link.course_outcome_text,
+                    reason=link.reason,
+                )
+                for link in links or []
+                if (link.program, link.outcome) in programs.outcome_ids
+            )
         run.status = RunStatus.completed
         run.completed_at = _now()
         run.model_version = output.model_version

@@ -1,3 +1,4 @@
+from app.models.alignment import CourseProgram, LinkSource, OutcomeLink, ProgramBasis
 from app.models.base import Base
 from app.models.org import (
     Course,
@@ -21,11 +22,15 @@ __all__ = [
     "Base",
     "CheckSession",
     "Course",
+    "CourseProgram",
     "Criterion",
     "CriterionOutcome",
+    "LinkSource",
     "Notification",
+    "OutcomeLink",
     "Principle",
     "Program",
+    "ProgramBasis",
     "ProgramDiscipline",
     "ProgramOutcome",
     "ReviewReport",

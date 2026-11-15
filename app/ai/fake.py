@@ -185,6 +185,27 @@ _ASSISTANT_REPLIES = {
 }
 
 
+def _words(text: str) -> set[str]:
+    return {w[:6] for w in re.findall(r"\w{5,}", text.casefold())}
+
+
+def _align(course_outcomes: list[dict], programs: list) -> list[dict]:
+    """Links a course outcome to a program outcome when they share two word stems: predictable for tests."""
+    return [
+        {
+            "course_outcome": c["code"],
+            "course_outcome_text": c["text"],
+            "program": p.code,
+            "outcome": number,
+            "reason": "Shared terms: " + ", ".join(sorted(_words(c["text"]) & _words(text))),
+        }
+        for c in course_outcomes
+        for p in programs
+        for number, text in sorted(p.outcomes.items())
+        if len(_words(c["text"]) & _words(text)) >= 2
+    ]
+
+
 class FakeProvider:
     model_version = "fake-evaluator"
 
@@ -224,6 +245,8 @@ class FakeProvider:
                     for item in meta["items"]
                 ]
             }
+        if purpose == "outcome_alignment":
+            return {"links": _align(meta["course_outcomes"], meta["programs"])}
         raise ValueError(f"fake provider has no behaviour for '{purpose}'")
 
     async def complete_text(

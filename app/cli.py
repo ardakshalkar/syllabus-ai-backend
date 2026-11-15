@@ -308,6 +308,11 @@ async def _import_programs(codes: list[str], dry_run: bool) -> None:
         report = await pi.import_programs(session, site)
         if dry_run:
             await session.rollback()
+        else:
+            from app.services import program_links
+
+            matched = await program_links.link_by_name(session)
+            print(f"courses matched to programs by name: {matched}")
     head = "dry run, nothing saved: would create" if dry_run else "created"
     print(
         f"{head} {len(report.created)}, update {len(report.updated)}"

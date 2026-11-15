@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api import (
     admin,
+    alignment,
     analytics,
     approval,
     auth,
@@ -25,6 +26,7 @@ for module in (
     catalog,
     drive,
     syllabi,
+    alignment,
     approval,
     improve,
     precheck,
