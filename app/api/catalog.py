@@ -4,12 +4,20 @@ import uuid
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from app.auth.rbac import forbidden, manages_school
 from app.config import get_settings
 from app.deps import CurrentUser, DbSession
-from app.enums import AiStatus, ApprovalStage, Role, RunStatus, SessionItemStatus, SessionStatus
+from app.enums import (
+    AiStatus,
+    ApprovalStage,
+    Role,
+    RunStatus,
+    SessionItemStatus,
+    SessionStatus,
+    VersionSource,
+)
 from app.library.config import get_library_config
 from app.models import (
     AssessmentRun,
@@ -392,6 +400,71 @@ async def update_folder(folder_id: uuid.UUID, body: FolderPatch, principal: Curr
     return await _folder_out(session, folder)
 
 
+@router.delete("/folders/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_folder(folder_id: uuid.UUID, principal: CurrentUser, session: DbSession) -> Response:
+    """Remove a folder a School registered by mistake, with what was read in from it.
+
+    Refused once any syllabus of the folder has been checked by the AI, or is queued for a check: its results
+    feed the Provost Office's reviews and reports, which must not lose them. Before that, a syllabus read from
+    Drive goes with the folder (and the course its file created, if nothing else uses it); one uploaded in the
+    app is only detached, since it is a professor's own file and not the folder's.
+    """
+    folder = await session.get(UploadFolder, folder_id)
+    if folder is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Folder not found")
+    ensure_can_manage(principal, folder.school_id)
+
+    in_folder = sa.select(Syllabus.id).where(Syllabus.folder_id == folder.id)
+    checked = await session.scalar(
+        sa.select(sa.func.count(sa.distinct(SyllabusVersion.syllabus_id))).where(
+            SyllabusVersion.syllabus_id.in_(in_folder),
+            sa.or_(
+                SyllabusVersion.id.in_(sa.select(AssessmentRun.version_id)),
+                SyllabusVersion.id.in_(sa.select(SessionItem.version_id)),
+            ),
+        )
+    )
+    if checked:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This folder cannot be removed: the AI has already checked syllabi in it.",
+        )
+
+    syllabi = (await session.scalars(sa.select(Syllabus).where(Syllabus.folder_id == folder.id))).all()
+    # A syllabus with any version uploaded in the app is a professor's own: detach it, never delete it.
+    uploaded = set(
+        (
+            await session.scalars(
+                sa.select(SyllabusVersion.syllabus_id).where(
+                    SyllabusVersion.syllabus_id.in_(in_folder),
+                    SyllabusVersion.source != VersionSource.drive,
+                )
+            )
+        ).all()
+    )
+    gone = [s for s in syllabi if s.id not in uploaded]
+    for s in syllabi:
+        if s.id in uploaded:
+            s.folder_id = None
+    await session.execute(
+        sa.update(SyllabusVersion).where(SyllabusVersion.folder_id == folder.id).values(folder_id=None)
+    )
+    await session.flush()
+    if gone:
+        await session.execute(sa.delete(Syllabus).where(Syllabus.id.in_([s.id for s in gone])))
+        # A Drive file creates its own course (drive_catalog._apply); drop the ones left with no syllabus.
+        await session.execute(
+            sa.delete(Course).where(
+                Course.id.in_({s.course_id for s in gone}),
+                Course.slug.like("drive-%"),
+                ~sa.exists().where(Syllabus.course_id == Course.id),
+            )
+        )
+    await session.delete(folder)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/collection", response_model=list[CollectionSchoolOut])
 async def collection(semester: str, principal: CurrentUser, session: DbSession):
     """Where each School stands in collecting its syllabi for a semester.
@@ -496,7 +569,9 @@ async def collection(semester: str, principal: CurrentUser, session: DbSession):
             .order_by(AssessmentRun.completed_at.desc())
         )
     ).all():
-        if folder_id is None or completed_at is None:  # the query filters these out; this tells the type checker
+        if (
+            folder_id is None or completed_at is None
+        ):  # the query filters these out; this tells the type checker
             continue
         seen_sessions = sessions_seen.setdefault(folder_id, set())
         if session_id is None or session_id not in seen_sessions:
