@@ -277,3 +277,135 @@ async def test_positive_decision_without_a_quote_cannot_pass(tmp_path):
     assert result.status == ResultStatus.cannot_verify
     assert result.evidence_verified is False
     assert result.confidence is None
+
+
+# --- Scanned PDFs (no text layer): OCR fallback ---------------------------------------------------------------
+
+OCR_PAGE = """# Силлабус
+## Оқыту нәтижелері
+LO1 Халықаралық қауіпсіздікке төнетін қатерлерді талдайды
+LO2 Ұлттық мүдделерді қорғау әдістерін бағалайды
+
+| Бағалау | Үлесі |
+| --- | --- |
+| Емтихан | 40% |
+"""
+
+
+def _scanned_pdf(tmp_path: Path, pages: int = 2) -> Path:
+    """An image-only PDF, like a CamScanner scan: pdfplumber and markitdown find no text in it."""
+    from PIL import Image, ImageDraw
+
+    images = []
+    for n in range(pages):
+        image = Image.new("RGB", (400, 560), "white")
+        ImageDraw.Draw(image).rectangle((40, 40 + n * 10, 360, 80 + n * 10), fill="black")
+        images.append(image)
+    path = tmp_path / "scan.pdf"
+    images[0].save(path, "PDF", save_all=True, append_images=images[1:])
+    return path
+
+
+def test_scanned_pdf_has_no_text(tmp_path):
+    from app.ai.extraction import ExtractionError, NoTextError
+    from app.ai.markdown import to_markdown
+
+    path = _scanned_pdf(tmp_path)
+    for read in (extract, to_markdown):
+        try:
+            read(path)
+        except NoTextError as exc:
+            # callers that only know ExtractionError still say "Cannot check"
+            assert isinstance(exc, ExtractionError)
+        else:
+            raise AssertionError(f"{read.__name__} read text from an image-only PDF")
+
+
+def test_scanned_pages_render_as_jpeg(tmp_path):
+    from app.ai import ocr
+
+    images, total = ocr.render_pages(_scanned_pdf(tmp_path, pages=3), dpi=72, max_pages=2)
+    assert total == 3
+    assert len(images) == 2
+    assert all(image.startswith(b"\xff\xd8") for image in images)
+
+
+def test_ocr_reply_fence_is_removed():
+    from app.ai import ocr
+
+    assert ocr.clean("```markdown\n# Силлабус\nLO1 …\n```") == "# Силлабус\nLO1 …"
+    assert ocr.clean("  plain text  ") == "plain text"
+
+
+async def test_scanned_pdf_without_ocr_cannot_be_checked(tmp_path):
+    import pytest
+
+    from app.ai import structure
+    from app.ai.extraction import NoTextError
+
+    with pytest.raises(NoTextError):
+        await structure.read_syllabus(_scanned_pdf(tmp_path), FakeProvider())
+
+
+async def test_scanned_pdf_is_read_by_ocr(tmp_path, monkeypatch):
+    from app.ai import ocr, structure
+
+    seen: list[int] = []
+
+    async def transcribe(image: bytes, number: int) -> str:
+        seen.append(number)
+        return f"```markdown\n{OCR_PAGE}\n```" if number == 1 else ""
+
+    monkeypatch.setattr(ocr, "enabled", lambda: True)
+    monkeypatch.setattr(ocr, "_model_transcriber", lambda: transcribe)
+    content, extractor = await structure.read_syllabus(_scanned_pdf(tmp_path), FakeProvider())
+    assert sorted(seen) == [1, 2]
+    assert extractor == structure.LINES  # the fake provider: no structure model
+    assert content.read_by_ocr
+    assert content.language == "Kazakh"
+    assert [o.code for o in content.outcomes] == ["LO1", "LO2"]
+    assert "Ұлттық мүдделерді" in content.raw_text
+
+
+async def test_ocr_markdown_feeds_the_structure_model(tmp_path, monkeypatch):
+    from app.ai import ocr, structure
+
+    class StructureProvider(FakeProvider):
+        async def complete_json(self, **kwargs):
+            assert kwargs["purpose"] == "structure"
+            assert "| Емтихан | 40% |" in kwargs["user"]
+            return {
+                "outcomes": [
+                    {"code": "LO1", "text": "Халықаралық қауіпсіздікке төнетін қатерлерді талдайды"}
+                ],
+                "outcomes_heading": "Оқыту нәтижелері",
+                "assessments": [{"name": "Емтихан", "weight_percent": 40, "parent": None, "outcomes": []}],
+                "weeks": [],
+                "sections": [{"kind": "outcomes", "heading": "Оқыту нәтижелері"}],
+            }
+
+    async def transcribe(image: bytes, number: int) -> str:
+        return OCR_PAGE
+
+    monkeypatch.setattr(ocr, "enabled", lambda: True)
+    monkeypatch.setattr(ocr, "_model_transcriber", lambda: transcribe)
+    monkeypatch.setattr(structure, "wanted_extractor", lambda: structure.EXTRACTOR)
+    content, extractor = await structure.read_syllabus(_scanned_pdf(tmp_path, pages=1), StructureProvider())
+    assert extractor == structure.EXTRACTOR
+    assert content.read_by_ocr
+    assert [(a.text, a.weight) for a in content.assessments] == [("Емтихан", 40.0)]
+
+
+async def test_scan_ocr_cannot_read_stays_cannot_check(tmp_path, monkeypatch):
+    import pytest
+
+    from app.ai import ocr, structure
+    from app.ai.extraction import NoTextError
+
+    async def transcribe(image: bytes, number: int) -> str:
+        return "  "
+
+    monkeypatch.setattr(ocr, "enabled", lambda: True)
+    monkeypatch.setattr(ocr, "_model_transcriber", lambda: transcribe)
+    with pytest.raises(NoTextError, match="none could be read"):
+        await structure.read_syllabus(_scanned_pdf(tmp_path), FakeProvider())

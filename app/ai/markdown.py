@@ -10,7 +10,7 @@ markitdown is a project dependency (`markitdown[docx,pdf]`).
 
 from pathlib import Path
 
-from app.ai.extraction import ExtractionError
+from app.ai.extraction import ExtractionError, NoTextError
 
 
 def to_markdown(path: Path) -> str:
@@ -24,5 +24,5 @@ def to_markdown(path: Path) -> str:
     except Exception as exc:
         raise ExtractionError(f"cannot open {suffix}: {exc}") from exc
     if not text.strip():
-        raise ExtractionError("the document contains no text")
+        raise NoTextError("the document contains no text")
     return text

@@ -116,6 +116,12 @@ class Settings(BaseSettings):
     # and sections (app/ai/structure.py). Off, or when that fails: the line-based regex extraction.
     structure_extraction: bool = True
     evidence_match_threshold: int = 85
+    # A PDF with no text layer (a phone or copier scan) is read page by page by this vision model on the same
+    # server (LLM_BASE_URL), e.g. google/gemini-3.1-flash-lite on OpenRouter (app/ai/ocr.py). Empty: no OCR, and
+    # such a file stays "Cannot check".
+    ocr_model: str = ""
+    ocr_dpi: int = 150  # pages are rendered at this resolution before they are sent
+    ocr_max_pages: int = 40  # a longer scan is read up to here
 
     precheck_ttl_s: int = 3600
 

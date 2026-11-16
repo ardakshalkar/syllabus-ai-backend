@@ -24,6 +24,7 @@ def _no_hosted_models(monkeypatch):
 
     monkeypatch.setenv("DECISION_MODEL", "")
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("OCR_MODEL", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

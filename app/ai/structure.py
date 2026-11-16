@@ -15,8 +15,9 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
+from app.ai import ocr
 from app.ai.evidence import normalize
-from app.ai.extraction import detect_language, extract, parse_lines
+from app.ai.extraction import NoTextError, detect_language, extract, parse_lines
 from app.ai.llm import LLMProvider
 from app.ai.types import AssessmentItem, ExtractedContent, Outcome, Week
 from app.config import get_settings
@@ -35,21 +36,42 @@ def wanted_extractor() -> str:
 
 async def read_syllabus(path: Path, llm: LLMProvider) -> tuple[ExtractedContent, str]:
     """The syllabus's content and which extractor produced it. A file that cannot be opened raises
-    ExtractionError as before; if only the Markdown or the model fails, the line extraction is used."""
-    base = await asyncio.to_thread(extract, path)
+    ExtractionError as before; if only the Markdown or the model fails, the line extraction is used.
+
+    A PDF with no text layer (a scan) is read by the OCR model when OCR_MODEL is set (app.ai.ocr); its
+    transcription then stands in for markitdown's Markdown. If OCR reads nothing either, NoTextError is raised."""
+    markdown: str | None = None
+    try:
+        base = await asyncio.to_thread(extract, path)
+    except NoTextError:
+        if path.suffix.lower() != ".pdf" or not ocr.enabled():
+            raise
+        log.info("%s has no text layer; reading it with OCR", path.name)
+        markdown = await ocr.read_pdf(path)
+        base = parse_lines(markdown_lines(markdown))
+        base.read_by_ocr = True
     if wanted_extractor() != EXTRACTOR:
         return base, LINES
     try:
-        from app.ai.markdown import to_markdown
+        if markdown is None:
+            from app.ai.markdown import to_markdown
 
-        markdown = await asyncio.to_thread(to_markdown, path)
+            markdown = await asyncio.to_thread(to_markdown, path)
         content, report = await extract_structure(markdown, llm, base=base)
     except Exception:
         log.exception("structure extraction failed for %s; using the line extraction", path.name)
         return base, LINES
     if report["dropped"]:
         log.info("structure extraction dropped text not in the document: %s", report["dropped"])
+    content.read_by_ocr = base.read_by_ocr
     return content, EXTRACTOR
+
+
+def markdown_lines(markdown: str) -> list[tuple[str, bool]]:
+    """(text, is_heading) for parse_lines: Markdown headings are headings, every other non-empty line a line."""
+    return [
+        (line.lstrip("#").strip(), line.startswith("#")) for line in markdown.splitlines() if line.strip()
+    ]
 
 
 SECTION_KEYS = ("purpose", "outcomes", "content", "assessment", "resources", "policy", "methods")
@@ -219,9 +241,7 @@ async def extract_structure(
         sections["outcomes"] = "\n".join(o.text for o in outcomes)
 
     if base is None:
-        base = parse_lines(
-            [(line.lstrip("#").strip(), line.startswith("#")) for line in lines if line.strip()]
-        )
+        base = parse_lines(markdown_lines(markdown))
     content = ExtractedContent(
         language=detect_language(markdown),
         raw_text=markdown,

@@ -61,6 +61,8 @@ class ExtractedContent(BaseModel):
     weeks: list[Week] = Field(default_factory=list)
     assessments: list[AssessmentItem] = Field(default_factory=list)
     resources: list[str] = Field(default_factory=list)
+    # The text was read from page images by a vision model (app.ai.ocr): a scan with no text layer.
+    read_by_ocr: bool = False
 
 
 class CriterionSpec(BaseModel):

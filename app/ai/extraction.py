@@ -15,6 +15,10 @@ class ExtractionError(Exception):
     """The file cannot be opened or holds no text (prototype status "Cannot open")."""
 
 
+class NoTextError(ExtractionError):
+    """The file opens but has no text layer, e.g. a scanned PDF; app.ai.ocr may still read it."""
+
+
 SUPPORTED_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".pdf": "application/pdf",
@@ -129,7 +133,7 @@ def extract(path: Path) -> ExtractedContent:
     else:
         raise ExtractionError(f"unsupported file type {suffix}; upload .docx or .pdf")
     if not lines:
-        raise ExtractionError("the document contains no text")
+        raise NoTextError("the document contains no text")
     return parse_lines(lines)
 
 

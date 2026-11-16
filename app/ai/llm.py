@@ -181,6 +181,14 @@ class _ChatProvider:
         )
 
 
+def api_key() -> str:
+    """The key for LLM_BASE_URL: LLM_API_KEY, or for OpenRouter OPENROUTER_API_KEY when that is not set."""
+    s = get_settings()
+    if s.llm_provider == "openrouter" and s.llm_api_key in ("", "EMPTY") and s.openrouter_api_key:
+        return s.openrouter_api_key
+    return s.llm_api_key
+
+
 class VllmProvider(_ChatProvider):
     """OpenAI chat API: vLLM, llama-server and OpenRouter."""
 
@@ -195,11 +203,8 @@ class VllmProvider(_ChatProvider):
             if not s.llm_thinking:
                 # Reasoning models think before the JSON answer, which is slow and billed as output tokens.
                 self.extra_body["reasoning"] = {"effort": "none"}
-        key = s.llm_api_key
-        if s.llm_provider == "openrouter" and key in ("", "EMPTY") and s.openrouter_api_key:
-            key = s.openrouter_api_key
         self.client = openai.AsyncOpenAI(
-            base_url=s.llm_base_url, api_key=key, timeout=s.llm_timeout_s, max_retries=0
+            base_url=s.llm_base_url, api_key=api_key(), timeout=s.llm_timeout_s, max_retries=0
         )
 
     async def _send(
