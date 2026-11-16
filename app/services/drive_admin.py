@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -85,7 +86,8 @@ def _write_secret(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".key-")
     try:
-        os.fchmod(fd, 0o600)
+        if sys.platform != "win32":  # Windows has no fchmod; the file keeps the folder's ACL
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as out:
             out.write(data)
         os.replace(tmp, path)

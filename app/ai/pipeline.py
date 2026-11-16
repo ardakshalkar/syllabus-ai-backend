@@ -214,8 +214,8 @@ async def evaluate(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    for batch in batch_results:
-        for r in batch:
+    for batch_output in batch_results:
+        for r in batch_output:
             results[r.criterion_id] = r
 
     await on_phase(Progress(EVIDENCE, len(specs), len(batches), len(batches)))

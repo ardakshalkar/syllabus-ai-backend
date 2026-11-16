@@ -241,8 +241,8 @@ async def send(
     settings = get_settings()
     if settings.email_backend == "console":
         outbox = Path("var/outbox")
-        outbox.mkdir(parents=True, exist_ok=True)
-        (outbox / name).write_bytes(pdf)
+        await asyncio.to_thread(outbox.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread((outbox / name).write_bytes, pdf)
         log.info("EMAIL to=%s subject=%s attachment=%s (%d bytes, kept in %s)\n%s",
                  ", ".join(to), subject, name, len(pdf), outbox / name, body)
     else:
