@@ -17,7 +17,7 @@ from typing import Any, Protocol
 import httpx
 
 from app.ai.checks.criteria import CANNOT_VERIFY_RULE, MISSING_RULE
-from app.ai.llm import LLMError, _save_trace
+from app.ai.llm import KEY_REFUSED, KeyRefusedError, LLMError, _save_trace
 from app.ai.types import CriterionSpec
 from app.config import get_settings
 from app.enums import ResultStatus
@@ -106,8 +106,10 @@ class Decider:
             started = time.monotonic()
             data: dict[str, Any] | None = None
             error: str | None = None
+            response_status = 0
             try:
                 response = await self.client.post(self.url, json=body)
+                response_status = response.status_code
                 if response.status_code >= 400:
                     error = f"HTTP {response.status_code}: {response.text[:300]}"
                 else:
@@ -128,6 +130,7 @@ class Decider:
                     duration_ms=int(duration * 1000),
                     queued_ms=0,
                     error=error,
+                    cost_usd=_cost(usage),
                 )
             if data is not None:
                 decisions = parse_answers(specs, data.get("answers") or {})
@@ -137,6 +140,8 @@ class Decider:
                 )
                 return decisions
             last_error = error or "no answer"
+            if response_status in KEY_REFUSED:
+                raise KeyRefusedError(f"the decision model refused the API key: {last_error}")
             log.warning("decisions attempt %s/%s failed: %s", attempt, self.max_retries, last_error)
             if attempt < self.max_retries:
                 await asyncio.sleep(min(2**attempt, 20))
@@ -146,3 +151,11 @@ class Decider:
 def get_decider() -> Decider | None:
     """None when no decision model is configured: the chat model then decides every status itself."""
     return Decider() if get_settings().decision_model else None
+
+
+def _cost(usage: dict[str, Any]) -> float | None:
+    """What OpenRouter charged for the request, in US dollars, when it says."""
+    try:
+        return float(usage["cost"]) if usage.get("cost") is not None else None
+    except (TypeError, ValueError):
+        return None

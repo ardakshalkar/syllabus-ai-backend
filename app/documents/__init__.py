@@ -105,10 +105,42 @@ class LlmTrace(Document):
     # Time spent waiting for a free request slot (LLM_MAX_CONCURRENCY) before the request was sent.
     queued_ms: int | None = None
     error: str | None = None
+    # What the server charged for the request, in US dollars, when it reports it (OpenRouter's usage.cost).
+    cost_usd: float | None = None
     created_at: datetime = Field(default_factory=_now)
 
     class Settings:
         name = "llm_traces"
+
+
+class OcrPage(Document):
+    """One scanned page as the OCR model transcribed it, keyed by the rendered image and the model. A page is
+    paid for once: a check that failed half-way (another page's request refused), a document read again after
+    the extraction changed, or the same scan uploaded twice reads its pages from here."""
+
+    key: str  # sha256 of the JPEG sent, then ":" and the model
+    text: str
+    created_at: datetime = Field(default_factory=_now)
+
+    class Settings:
+        name = "ocr_pages"
+        indexes = [IndexModel([("key", ASCENDING)], unique=True)]
+
+
+class FileProbe(Document):
+    """What a syllabus version's file is, learnt by opening it: ordinary text, a scan the OCR model has to read
+    (and how many pages), or a file that cannot be read. The cost estimate before a check uses it; versions are
+    immutable, so it never goes stale."""
+
+    version_id: UUID
+    kind: Literal["text", "scan", "unreadable"]
+    pages: int | None = None
+    reason: str | None = None
+    created_at: datetime = Field(default_factory=_now)
+
+    class Settings:
+        name = "file_probes"
+        indexes = [IndexModel([("version_id", ASCENDING)], unique=True)]
 
 
 class DriveSettingsDoc(Document):
@@ -138,4 +170,6 @@ DOCUMENT_MODELS = [
     AssistantThread,
     LlmTrace,
     DriveSettingsDoc,
+    OcrPage,
+    FileProbe,
 ]

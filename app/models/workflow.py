@@ -40,6 +40,9 @@ class CheckSession(UUIDPk, CreatedAt, Base):
     only_unchecked: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     # Set to run the AI again over what it has already checked (after a rubric change), skipping the rest.
     only_checked: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    # The estimated cost in US dollars the person who started the check saw and agreed to (POST
+    # /sessions/estimate); None for checks started before the estimate existed or by a script.
+    estimated_cost_usd: Mapped[float | None] = mapped_column(sa.Numeric(10, 2, asdecimal=False))
     created_by: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"))
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

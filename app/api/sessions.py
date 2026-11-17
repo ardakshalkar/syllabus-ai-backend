@@ -4,8 +4,8 @@ from fastapi import APIRouter, Query, Response, status
 
 from app.deps import CurrentUser, DbSession
 from app.models import CheckSession, User
-from app.schemas.work import SessionCreate, SessionItemOut, SessionOut
-from app.services import sessions
+from app.schemas.work import EstimateIn, EstimateOut, SessionCreate, SessionItemOut, SessionOut
+from app.services import cost_estimate, sessions
 from app.workers import dispatch
 
 router = APIRouter(tags=["sessions"])
@@ -36,6 +36,15 @@ async def create(body: SessionCreate, principal: CurrentUser, session: DbSession
     await session.commit()
     await dispatch.check_runs(run_ids)
     return await _out(session, cs)
+
+
+@router.post("/sessions/estimate", response_model=EstimateOut)
+async def estimate(body: EstimateIn, principal: CurrentUser, session: DbSession):
+    """What a check with this scope would read (files, scans and their pages, files it cannot read) and roughly
+    what it would cost, for the person starting it to agree to first. Opens files it has not seen before, so
+    the first call for a new folder can take up to about 20 seconds."""
+    pairs = await sessions.scope_versions(session, principal, **body.model_dump())
+    return await cost_estimate.estimate(session, pairs)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionOut)

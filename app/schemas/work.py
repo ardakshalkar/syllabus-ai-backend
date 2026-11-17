@@ -24,6 +24,9 @@ class SessionCreate(Schema):
     only_checked: bool = Field(
         default=False, description="check again only syllabi the AI has already checked, skipping the rest"
     )
+    estimated_cost_usd: float | None = Field(
+        default=None, ge=0, description="the estimate (POST /sessions/estimate) the user saw and agreed to"
+    )
 
     @model_validator(mode="after")
     def _one_filter(self) -> "SessionCreate":
@@ -60,7 +63,50 @@ class SessionOut(Schema):
     notify_school: bool
     only_unchecked: bool
     only_checked: bool
+    estimated_cost_usd: float | None = None
     progress: SessionProgress
+
+
+class EstimateIn(Schema):
+    """Which syllabi a check would take: the same scope and filters as SessionCreate."""
+
+    scope_type: SessionScope
+    scope_ref: uuid.UUID | None = None
+    semester: str
+    only_unchecked: bool = False
+    only_checked: bool = False
+
+
+class EstimateFile(Schema):
+    filename: str
+    course: str
+    pages: int | None = None
+    reason: str | None = None
+
+
+class EstimateOut(Schema):
+    """What a check would read and roughly what it would cost, in words a School administrator can follow."""
+
+    files: int = Field(description="syllabi the check would take")
+    text_files: int = Field(description="Word files and PDFs with text, read directly")
+    scans: int = Field(description="scanned PDFs the OCR model has to read first")
+    scan_pages: int = Field(description="pages of those scans that would be read (up to OCR_MAX_PAGES each)")
+    already_read: int = Field(description="files read by an earlier check: their text is reused at no cost")
+    unreadable: int = Field(description="files the check cannot read: unsupported type, empty, or damaged")
+    not_looked_at: int = Field(description="files not opened in time for this estimate; estimated by average")
+    ocr_enabled: bool
+    billed: bool = Field(
+        description="false when the models run on the university's own server (no per-use cost)"
+    )
+    cost_usd: float = Field(description="expected cost")
+    cost_min_usd: float
+    cost_max_usd: float
+    check_usd: float = Field(description="part of the expected cost for checking against the criteria")
+    reading_usd: float = Field(description="part for reading the documents' structure")
+    ocr_usd: float = Field(description="part for reading scans")
+    minutes: int = Field(description="rough time to finish, in minutes")
+    scan_files: list[EstimateFile]
+    unreadable_files: list[EstimateFile]
 
 
 class SessionItemOut(Schema):

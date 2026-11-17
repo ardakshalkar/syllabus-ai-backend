@@ -23,6 +23,31 @@ class LLMError(Exception):
     pass
 
 
+class KeyRefusedError(LLMError):
+    """The server refused the API key itself (401, 402, 403: wrong key, no credit left, spending limit
+    reached). Asking again cannot help, so it is never retried: every retry was another request refused
+    while a check sat waiting."""
+
+
+# 401 unauthorised, 402 no credit, 403 the key's spending limit ("Key limit exceeded" on OpenRouter).
+KEY_REFUSED = (401, 402, 403)
+
+
+def usage_cost(usage: Any) -> float | None:
+    """What OpenRouter charged for a chat completion, in US dollars (its usage.cost), when it says."""
+    extra = getattr(usage, "model_extra", None) or {}
+    try:
+        return float(extra["cost"]) if extra.get("cost") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def key_refused(exc: Exception) -> KeyRefusedError | None:
+    if isinstance(exc, openai.APIStatusError) and exc.status_code in KEY_REFUSED:
+        return KeyRefusedError(f"the LLM server refused the API key ({exc.status_code}): {exc}")
+    return None
+
+
 class LLMProvider(Protocol):
     model_version: str
 
@@ -78,6 +103,7 @@ class _Reply:
     text: str
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cost_usd: float | None = None
 
 
 class _RetryableError(Exception):
@@ -131,6 +157,7 @@ class _ChatProvider:
                     response=reply.text if reply else None,
                     prompt_tokens=reply.prompt_tokens if reply else None,
                     completion_tokens=reply.completion_tokens if reply else None,
+                    cost_usd=reply.cost_usd if reply else None,
                     duration_ms=int(duration * 1000),
                     queued_ms=int((started - queued) * 1000),
                     error=error,
@@ -221,12 +248,15 @@ class VllmProvider(_ChatProvider):
         try:
             completion = await self.client.chat.completions.create(**kwargs)
         except openai.APIError as exc:
+            if refused := key_refused(exc):
+                raise refused from exc
             raise _RetryableError(f"{type(exc).__name__}: {exc}") from exc
         usage = completion.usage
         return _Reply(
             _strip_thinking(completion.choices[0].message.content or ""),
             getattr(usage, "prompt_tokens", None),
             getattr(usage, "completion_tokens", None),
+            usage_cost(usage),
         )
 
 
