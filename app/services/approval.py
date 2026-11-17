@@ -106,7 +106,12 @@ async def _notify_transition(
     session: AsyncSession, syllabus: Syllabus, to_stage: ApprovalStage, comment: str | None
 ) -> None:
     course, program = await course_context(session, syllabus.course_id)
-    payload = {"syllabus_id": str(syllabus.id), "stage": to_stage.value}
+    payload = {
+        "syllabus_id": str(syllabus.id),
+        "course_name": course.name,
+        "stage": to_stage.value,
+        "comment": comment,
+    }
     if to_stage == S.head_review:
         recipients = await users_with_role(session, Role.program_head, program_id=program.id)
         title = f"{course.name} syllabus is waiting for Head of Program review"
@@ -160,7 +165,11 @@ async def add_comment(
             kind="comment",
             title=f"New reviewer comment on {course.name}",
             body=text,
-            payload={"syllabus_id": str(syllabus.id)},
+            payload={
+                "syllabus_id": str(syllabus.id),
+                "course_name": course.name,
+                "comment": text,
+            },
         )
     await session.flush()
     return event
