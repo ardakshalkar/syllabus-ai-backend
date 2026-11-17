@@ -402,12 +402,10 @@ async def update_folder(folder_id: uuid.UUID, body: FolderPatch, principal: Curr
 
 @router.delete("/folders/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_folder(folder_id: uuid.UUID, principal: CurrentUser, session: DbSession) -> Response:
-    """Remove a folder a School registered by mistake, with what was read in from it.
+    """Remove a folder a School registered, with what was read in from it.
 
-    Refused once any syllabus of the folder has been checked by the AI, or is queued for a check: its results
-    feed the Provost Office's reviews and reports, which must not lose them. Before that, a syllabus read from
-    Drive goes with the folder (and the course its file created, if nothing else uses it); one uploaded in the
-    app is only detached, since it is a professor's own file and not the folder's.
+    Syllabi read from Drive go with the folder (and the course its file created, if nothing else uses it);
+    one uploaded in the app is only detached, since it is a professor's own file and not the folder's.
     """
     folder = await session.get(UploadFolder, folder_id)
     if folder is None:
@@ -415,21 +413,6 @@ async def delete_folder(folder_id: uuid.UUID, principal: CurrentUser, session: D
     ensure_can_manage(principal, folder.school_id)
 
     in_folder = sa.select(Syllabus.id).where(Syllabus.folder_id == folder.id)
-    checked = await session.scalar(
-        sa.select(sa.func.count(sa.distinct(SyllabusVersion.syllabus_id))).where(
-            SyllabusVersion.syllabus_id.in_(in_folder),
-            sa.or_(
-                SyllabusVersion.id.in_(sa.select(AssessmentRun.version_id)),
-                SyllabusVersion.id.in_(sa.select(SessionItem.version_id)),
-            ),
-        )
-    )
-    if checked:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "This folder cannot be removed: the AI has already checked syllabi in it.",
-        )
-
     syllabi = (await session.scalars(sa.select(Syllabus).where(Syllabus.folder_id == folder.id))).all()
     # A syllabus with any version uploaded in the app is a professor's own: detach it, never delete it.
     uploaded = set(
@@ -451,7 +434,8 @@ async def delete_folder(folder_id: uuid.UUID, principal: CurrentUser, session: D
     )
     await session.flush()
     if gone:
-        await session.execute(sa.delete(Syllabus).where(Syllabus.id.in_([s.id for s in gone])))
+        gone_ids = [s.id for s in gone]
+        await session.execute(sa.delete(Syllabus).where(Syllabus.id.in_(gone_ids)))
         # A Drive file creates its own course (drive_catalog._apply); drop the ones left with no syllabus.
         await session.execute(
             sa.delete(Course).where(
