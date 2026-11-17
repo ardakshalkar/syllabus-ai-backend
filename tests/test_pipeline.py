@@ -194,6 +194,31 @@ async def test_decision_model_decides_and_chat_model_cites_every_decision(tmp_pa
     assert output.model_version == "fake-decider+fake-evaluator"
 
 
+async def test_explanations_can_share_one_request(tmp_path, monkeypatch):
+    from app.ai.checks.criteria import build_user_prompt
+    from app.ai.checks.technical import build_report
+    from app.config import get_settings
+
+    content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=True)))
+    decider = _FakeDecider(failing={"1.2", "6.1"})
+    llm = _CountingProvider()
+    monkeypatch.setattr(get_settings(), "explain_calls", 1)
+    output = await pipeline.evaluate(content, _specs(), llm, trace=False, decider=decider)
+
+    assert [purpose for purpose, _ in llm.calls] == ["explain"]
+    assert sorted(llm.calls[0][1]) == sorted(decider.asked)
+    assert len(output.results) == 49
+    assert next(r for r in output.results if r.criterion_id == "6.1").status == ResultStatus.not_compliant
+    # Each criterion says which principle it belongs to when several share the request.
+    prompt = build_user_prompt(_specs()[:8], content, build_report(content), {})
+    assert "Principles:\n1. " in prompt and '"principle": "2"' in prompt
+
+    monkeypatch.setattr(get_settings(), "explain_calls", 2)
+    llm = _CountingProvider()
+    await pipeline.evaluate(content, _specs(), llm, trace=False, decider=decider)
+    assert len(llm.calls) == 2
+
+
 async def test_criteria_the_decision_model_skips_are_decided_by_the_chat_model(tmp_path):
     content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=True)))
     llm = _CountingProvider()

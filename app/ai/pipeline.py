@@ -89,6 +89,21 @@ def _by_principle(specs: list[CriterionSpec]) -> list[list[CriterionSpec]]:
     return [list(g) for _, g in groupby(sorted(specs, key=lambda s: s.principle), key=lambda s: s.principle)]
 
 
+def _in_requests(specs: list[CriterionSpec], requests: int) -> list[list[CriterionSpec]]:
+    """The principles in `requests` groups of consecutive principles with about as many criteria each;
+    0 or fewer: one group per principle."""
+    principles = _by_principle(specs)
+    if requests <= 0 or requests >= len(principles):
+        return principles
+    groups: list[list[CriterionSpec]] = [[]]
+    share = len(specs) / requests
+    for principle in principles:
+        if groups[-1] and len(groups) < requests and len(groups[-1]) + len(principle) / 2 > share:
+            groups.append([])
+        groups[-1] += principle
+    return groups
+
+
 def _cannot_verify(spec: CriterionSpec, why: str, recommendation: str = "") -> CriterionResultData:
     return CriterionResultData(
         criterion_id=spec.code,
@@ -166,14 +181,17 @@ async def evaluate(
     undecided = [s for s in to_llm if s.code not in decisions]
     statuses = {code: d.status for code, d in decisions.items()}
     confidences = {code: d.confidence for code, d in decisions.items()}
-    jobs = [(b, True) for b in _by_principle(to_explain)] + [(b, False) for b in _by_principle(undecided)]
+    jobs = [(b, True) for b in _in_requests(to_explain, settings.explain_calls)] + [
+        (b, False) for b in _by_principle(undecided)
+    ]
     progress = Progress(CRITERIA, criteria_total=len(specs), principles_total=len(jobs))
     # Same limit as the LLM client's, applied here too so `running` lists only principles really in flight
     # (and, with one slot, they go in rubric order).
     slots = asyncio.Semaphore(settings.llm_max_concurrency)
 
     async def evaluate_batch(batch: list[CriterionSpec], explain: bool) -> list[CriterionResultData]:
-        name = f"{batch[0].principle}. {batch[0].principle_name}"
+        first, last = batch[0].principle, batch[-1].principle
+        name = f"{first}. {batch[0].principle_name}" if first == last else f"Principles {first}–{last}"
         async with slots:
             progress.running.append(name)
             await on_phase(progress)
@@ -205,9 +223,16 @@ async def evaluate(
         f"{dm.model_version}+{llm.model_version}" if dm is not None and decisions else llm.model_version
     )
     await on_phase(progress)
-    tasks = [asyncio.ensure_future(evaluate_batch(b, explain)) for b, explain in jobs]
+    # Every principle's request begins with the same syllabus. Sent all at once, none finds it in the host's
+    # prompt cache; one principle sent first puts it there, and the others then read it at the cache price.
+    lead = jobs[:1] if len(jobs) > 1 else []
+    tasks: list[asyncio.Future[list[CriterionResultData]]] = []
+    batch_results: list[list[CriterionResultData]] = []
     try:
-        batch_results = await asyncio.gather(*tasks)
+        for wave in (lead, jobs[len(lead) :]):
+            started = [asyncio.ensure_future(evaluate_batch(b, explain)) for b, explain in wave]
+            tasks += started
+            batch_results += await asyncio.gather(*started)
     except BaseException:
         # One principle failed or the run was cancelled: stop the LLM calls still waiting or running.
         for task in tasks:

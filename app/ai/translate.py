@@ -13,6 +13,7 @@ from typing import Any
 
 from app.ai.llm import LLMError, LLMProvider
 from app.ai.types import LANGUAGE_NAMES, LANGUAGES, CriterionResultData, ResultText, language_code
+from app.enums import ResultStatus
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +111,13 @@ async def translate_results(
     language included. Results whose translation failed keep only the original."""
     source = language_code(source_language)
     targets = [lang for lang in LANGUAGES if lang != source]
-    texts = [r for r in results if r.explanation.strip() or r.recommendation.strip()]
+    # A Compliant finding is not translated: the app shows its quote with a fixed text of its own in every
+    # language, and its recommendation is the fixed NO_CHANGE, which the app translates itself.
+    texts = [
+        r
+        for r in results
+        if r.status != ResultStatus.compliant and (r.explanation.strip() or r.recommendation.strip())
+    ]
     chunks = [texts[i : i + CHUNK] for i in range(0, len(texts), CHUNK)]
     answers = await asyncio.gather(
         *(_translate_chunk(llm, c, source, targets, run_id) for c in chunks), return_exceptions=True

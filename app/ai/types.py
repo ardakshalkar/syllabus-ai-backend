@@ -51,6 +51,14 @@ class AssessmentItem(BaseModel):
     outcomes: list[str] = Field(default_factory=list)
 
 
+class Block(BaseModel):
+    """One line of `raw_text` (a paragraph or a table row) and the kind of content it holds (app.ai.blocks).
+    Findings cite a block by its number: its position in `ExtractedContent.blocks`, counted from 1."""
+
+    text: str
+    category: str
+
+
 class ExtractedContent(BaseModel):
     language: str | None = None
     raw_text: str
@@ -63,6 +71,8 @@ class ExtractedContent(BaseModel):
     resources: list[str] = Field(default_factory=list)
     # The text was read from page images by a vision model (app.ai.ocr): a scan with no text layer.
     read_by_ocr: bool = False
+    # raw_text line by line with a category each; empty until app.ai.blocks.categorize has run.
+    blocks: list[Block] = Field(default_factory=list)
 
 
 class CriterionSpec(BaseModel):
@@ -99,6 +109,8 @@ class CriterionResultData(BaseModel):
     required_context: str | None = None
     confidence: float | None = None
     evidence_verified: bool | None = None
+    # The block (ExtractedContent.blocks, counted from 1) the evidence was taken from, when the model cited one.
+    evidence_block: int | None = None
     # The language explanation and recommendation are written in, and their translations into the other
     # languages of the app, keyed by language code. Results stored before translation have neither.
     language: str | None = None

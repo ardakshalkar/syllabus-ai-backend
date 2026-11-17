@@ -104,6 +104,15 @@ class _Reply:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     cost_usd: float | None = None
+    cached_tokens: int | None = None
+    provider: str | None = None
+
+
+def cached_tokens(usage: Any) -> int | None:
+    """Prompt tokens served from the host's prompt cache (usage.prompt_tokens_details.cached_tokens)."""
+    details = getattr(usage, "prompt_tokens_details", None)
+    value = getattr(details, "cached_tokens", None)
+    return value if isinstance(value, int) else None
 
 
 class _RetryableError(Exception):
@@ -120,7 +129,11 @@ class _ChatProvider:
         self.max_retries = s.llm_max_retries
 
     async def _send(
-        self, messages: list[dict[str, str]], schema: dict[str, Any] | None, purpose: str
+        self,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any] | None,
+        purpose: str,
+        run_id: uuid.UUID | None = None,
     ) -> _Reply:
         raise NotImplementedError
 
@@ -142,7 +155,7 @@ class _ChatProvider:
                 # Measured from here: the wait for a free slot is queued_ms, not part of duration_ms.
                 started = time.monotonic()
                 try:
-                    reply = await self._send(messages, schema, purpose)
+                    reply = await self._send(messages, schema, purpose, run_id)
                     result = json.loads(reply.text) if parse else reply.text
                     error = None
                 except (_RetryableError, json.JSONDecodeError) as exc:
@@ -158,6 +171,8 @@ class _ChatProvider:
                     prompt_tokens=reply.prompt_tokens if reply else None,
                     completion_tokens=reply.completion_tokens if reply else None,
                     cost_usd=reply.cost_usd if reply else None,
+                    cached_tokens=reply.cached_tokens if reply else None,
+                    provider=reply.provider if reply else None,
                     duration_ms=int(duration * 1000),
                     queued_ms=int((started - queued) * 1000),
                     error=error,
@@ -226,16 +241,28 @@ class VllmProvider(_ChatProvider):
         if s.llm_provider == "openrouter":
             # OpenRouter routes each request to one of several hosts of the model, and some ignore
             # response_format. require_parameters sends it only to hosts that honour the JSON schema.
-            self.extra_body["provider"] = {"require_parameters": True}
+            routing: dict[str, Any] = {"require_parameters": True}
+            order = [p.strip() for p in s.llm_provider_order.split(",") if p.strip()]
+            # The hosts listed are the chat model's, not a translation model's.
+            if order and self.model == s.llm_model:
+                routing |= {"order": order, "allow_fallbacks": True}
+            self.extra_body["provider"] = routing
+            # Report the cost of each request (usage.cost), which the cost estimate prefers to list prices.
+            self.extra_body["usage"] = {"include": True}
             if not s.llm_thinking:
                 # Reasoning models think before the JSON answer, which is slow and billed as output tokens.
                 self.extra_body["reasoning"] = {"effort": "none"}
+        self.openrouter = s.llm_provider == "openrouter"
         self.client = openai.AsyncOpenAI(
             base_url=s.llm_base_url, api_key=api_key(), timeout=s.llm_timeout_s, max_retries=0
         )
 
     async def _send(
-        self, messages: list[dict[str, str]], schema: dict[str, Any] | None, purpose: str
+        self,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any] | None,
+        purpose: str,
+        run_id: uuid.UUID | None = None,
     ) -> _Reply:
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": 0}
         if schema is not None:
@@ -243,8 +270,13 @@ class VllmProvider(_ChatProvider):
                 "type": "json_schema",
                 "json_schema": {"name": purpose, "schema": schema, "strict": True},
             }
-        if self.extra_body:
-            kwargs["extra_body"] = self.extra_body
+        extra_body = dict(self.extra_body)
+        if self.openrouter and run_id is not None:
+            # One session per check: when it falls back off the listed hosts, OpenRouter keeps the check's
+            # requests on the host it fell back to, whose cache then holds the syllabus.
+            extra_body["session_id"] = str(run_id)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
         try:
             completion = await self.client.chat.completions.create(**kwargs)
         except openai.APIError as exc:
@@ -257,6 +289,8 @@ class VllmProvider(_ChatProvider):
             getattr(usage, "prompt_tokens", None),
             getattr(usage, "completion_tokens", None),
             usage_cost(usage),
+            cached_tokens(usage),
+            (completion.model_extra or {}).get("provider"),
         )
 
 
@@ -284,7 +318,11 @@ class OllamaProvider(_ChatProvider):
         self.client = httpx.AsyncClient(timeout=s.llm_timeout_s, headers=headers)
 
     async def _send(
-        self, messages: list[dict[str, str]], schema: dict[str, Any] | None, purpose: str
+        self,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any] | None,
+        purpose: str,
+        run_id: uuid.UUID | None = None,
     ) -> _Reply:
         body: dict[str, Any] = {
             "model": self.model,
