@@ -271,3 +271,62 @@ async def test_delete_folder_removes_folder_and_its_drive_syllabi(ref, client_fo
     async with pg.session_scope() as session:
         assert (await session.get(UploadFolder, folder_id)) is None
 
+
+def test_adaptive_list_folder_tree_layouts():
+    """Verify adaptive discovery across flat, nested, program, wrapper, and language layouts."""
+    from app.storage.drive import StubDrive
+
+    stub_root = get_settings().drive_stub_root
+    name = f"test-adaptive-{uuid.uuid4().hex[:8]}"
+    root = stub_root / name
+    root.mkdir(parents=True)
+
+    # 1. Flat file in root
+    (root / "Силлабус Алгоритмизация.docx").write_bytes(b"PKalgo")
+    # 2. Wrapper container folder
+    (root / "Осень 2026" / "Физика").mkdir(parents=True)
+    (root / "Осень 2026" / "Физика" / "Physics EN.docx").write_bytes(b"PKphys")
+    # 3. Program folder with subfolder and flat file
+    (root / "ОП Финансы" / "Корпоративные финансы").mkdir(parents=True)
+    (root / "ОП Финансы" / "Корпоративные финансы" / "Силлабус.docx").write_bytes(b"PKcorp")
+    (root / "ОП Финансы" / "Налоги и налогообложение.docx").write_bytes(b"PKtax")
+    # 4. Department and year hierarchy
+    (root / "Бакалавриат" / "1 курс" / "Кафедра Экономики" / "Микроэкономика").mkdir(parents=True)
+    (root / "Бакалавриат" / "1 курс" / "Кафедра Экономики" / "Микроэкономика" / "Силлабус.docx").write_bytes(b"PKmicro")
+    # 5. Language subfolder
+    (root / "Химия" / "Казахское отделение").mkdir(parents=True)
+    (root / "Химия" / "Казахское отделение" / "Силлабус.docx").write_bytes(b"PKchem")
+    # 6. Teacher subfolder
+    (root / "Базы данных" / "Ахметов А.А.").mkdir(parents=True)
+    (root / "Базы данных" / "Ахметов А.А." / "Силлабус.docx").write_bytes(b"PKdb")
+    # 7. Non-syllabi to skip
+    (root / "Архив" / "Старый.docx").parent.mkdir(parents=True)
+    (root / "Архив" / "Старый.docx").write_bytes(b"PKold")
+    (root / "Шаблон силлабуса.docx").write_bytes(b"PKtmpl")
+    (root / "readme.docx").write_bytes(b"PKreadme")
+    (root / "notes.txt").write_text("notes")
+
+    drive = StubDrive()
+    listing = drive_catalog.list_folder_tree(drive, name)
+
+    by_discipline = {f.discipline: f for f in listing.found}
+    assert "Алгоритмизация" in by_discipline
+    assert "Физика" in by_discipline
+    assert "Корпоративные финансы" in by_discipline
+    assert "Налоги и налогообложение" in by_discipline
+    assert "Микроэкономика" in by_discipline
+    assert "Химия" in by_discipline
+    assert "Базы данных" in by_discipline
+    assert len(listing.found) == 7
+
+    assert by_discipline["Корпоративные финансы"].program_folder == "ОП Финансы"
+    assert by_discipline["Налоги и налогообложение"].program_folder == "ОП Финансы"
+    assert by_discipline["Микроэкономика"].discipline == "Микроэкономика"
+
+    skipped_paths = {s["path"] for s in listing.skipped}
+    assert "Архив/" in skipped_paths
+    assert "Шаблон силлабуса.docx" in skipped_paths
+    assert "readme.docx" in skipped_paths
+    assert "notes.txt" in skipped_paths
+
+
