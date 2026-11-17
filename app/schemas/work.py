@@ -24,6 +24,11 @@ class SessionCreate(Schema):
     only_checked: bool = Field(
         default=False, description="check again only syllabi the AI has already checked, skipping the rest"
     )
+    force: bool = Field(
+        default=False,
+        description="administrators only: ask the AI again even for syllabi whose file has not changed since "
+        "their last check (otherwise that check's result is taken at no cost)",
+    )
     estimated_cost_usd: float | None = Field(
         default=None, ge=0, description="the estimate (POST /sessions/estimate) the user saw and agreed to"
     )
@@ -68,6 +73,7 @@ class SessionOut(Schema):
     notify_school: bool
     only_unchecked: bool
     only_checked: bool
+    force: bool = False
     estimated_cost_usd: float | None = None
     check_mode: str | None = Field(
         None, description="standard | single (services.check_mode); None: standard"
@@ -86,6 +92,11 @@ class EstimateIn(Schema):
     only_checked: bool = False
     only_counted: bool = Field(
         default=False, description="only the files counted already: what a check started now could take"
+    )
+    force: bool = Field(
+        default=False,
+        description="administrators only: ask the AI again even for syllabi whose file has not changed since "
+        "their last check (otherwise that check's result is taken at no cost)",
     )
 
 
@@ -121,6 +132,11 @@ class EstimateOut(Schema):
     scans: int = Field(description="scanned PDFs the OCR model has to read first")
     scan_pages: int = Field(description="pages of those scans that would be read (up to OCR_MAX_PAGES each)")
     already_read: int = Field(description="files read by an earlier check: their text is reused at no cost")
+    unchanged: int = Field(
+        default=0,
+        description="files that have not changed since their last check against this rubric: that result is "
+        "taken at no cost (none when `force`)",
+    )
     unreadable: int = Field(description="files the check cannot read: unsupported type, empty, or damaged")
     not_looked_at: int = Field(description="files not opened in time for this estimate; estimated by average")
     ocr_enabled: bool

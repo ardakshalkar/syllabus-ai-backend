@@ -48,7 +48,7 @@ async def estimate(body: EstimateIn, principal: CurrentUser, session: DbSession)
     if only_counted:
         left_out = await cost_estimate.uncounted([v for _, v in pairs])
         pairs = [p for p in pairs if p[1] not in left_out]
-    return await cost_estimate.estimate(session, pairs)
+    return await cost_estimate.estimate(session, pairs, force=body.force)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionOut)

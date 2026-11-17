@@ -42,6 +42,9 @@ class CheckSession(UUIDPk, CreatedAt, Base):
     only_checked: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     # The estimated cost in US dollars the person who started the check saw and agreed to (POST
     # /sessions/estimate); None for checks started before the estimate existed or by a script.
+    # Set by an administrator: ask the AI again for every syllabus, even where an earlier check of the same
+    # file can be reused (services.checks.reusable_run).
+    force: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     estimated_cost_usd: Mapped[float | None] = mapped_column(sa.Numeric(10, 2, asdecimal=False))
     # How the AI checks this session's syllabi (services.check_mode), fixed when the session is created so it
     # runs the way its estimate was priced. None: created before the setting existed, i.e. "standard".

@@ -90,7 +90,7 @@ async def test_estimate_lists_what_a_check_would_read(ref, client_for, tmp_path)
     body = {"scope_type": "school", "scope_ref": str(ref["schools"]["digital"].id), "semester": "Fall 2026"}
     estimate = (await admin.post("/sessions/estimate", json=body)).json()
     assert estimate["files"] == 2
-    assert estimate["already_read"] == 1  # read by the check after its upload: reused for free
+    assert estimate["unchanged"] == 1  # checked after its upload and not changed since: taken for free
     # OCR is off in the tests, so the scan is one the check cannot read.
     assert estimate["unreadable"] == 1
     assert estimate["unreadable_files"][0]["filename"] == "scan.pdf"

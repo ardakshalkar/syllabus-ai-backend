@@ -116,6 +116,12 @@ class RunOut(Schema):
     started_at: datetime | None
     completed_at: datetime | None
     error: str | None
+    reused_from_id: uuid.UUID | None = Field(
+        default=None,
+        description="the earlier check whose result this one took because the file had not changed; "
+        "None when the AI was asked",
+    )
+    force: bool = Field(default=False, description="an administrator asked the AI again regardless")
 
 
 class CriterionResultOut(CriterionResultData):

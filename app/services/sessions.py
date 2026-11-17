@@ -94,10 +94,12 @@ async def create(
     only_checked: bool = False,
     estimated_cost_usd: float | None = None,
     only_counted: bool = False,
+    force: bool = False,
 ) -> tuple[CheckSession, list[uuid.UUID]]:
     """Returns the session and the run ids to dispatch after commit (empty when scheduled)."""
     school_id = await _scope_school(session, scope_type, scope_ref)
     ensure_can_manage(principal, school_id)
+    ensure_can_force(principal, force)
     if not checks:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Select at least one check")
     if scheduled_at and scheduled_at.tzinfo is None:
@@ -116,6 +118,7 @@ async def create(
         only_unchecked=only_unchecked,
         only_checked=only_checked,
         estimated_cost_usd=estimated_cost_usd,
+        force=force,
         check_mode=mode.mode,
         check_model=mode.model,
         created_by=principal.id,
@@ -127,6 +130,13 @@ async def create(
     return cs, await start(session, cs, counted_only=only_counted, require_counted=True)
 
 
+def ensure_can_force(principal: Principal, force: bool) -> None:
+    """Asking the AI again for a file it has already checked costs money for the same answer, so only the
+    administrator may (e.g. after the model or the library changed, which the reuse does not see)."""
+    if force and not principal.has(Role.admin):
+        raise forbidden("Only the administrator can make the AI check unchanged files again")
+
+
 async def scope_versions(
     session: AsyncSession,
     principal: Principal,
@@ -136,10 +146,12 @@ async def scope_versions(
     semester: str,
     only_unchecked: bool,
     only_checked: bool,
+    force: bool = False,
 ) -> list[tuple[uuid.UUID, uuid.UUID]]:
     """(syllabus id, version id) a check with this scope and filters would take, for the estimate before it."""
     school_id = await _scope_school(session, scope_type, scope_ref)
     ensure_can_manage(principal, school_id)
+    ensure_can_force(principal, force)
     probe = CheckSession(
         scope_type=scope_type,
         scope_ref=scope_ref,
@@ -208,7 +220,9 @@ async def start(
     for syllabus_id, version_id in pairs:
         version = await session.get(SyllabusVersion, version_id)
         assert version is not None
-        run = await create_run(session, version, trigger=trigger, checks=checks, session_id=cs.id)
+        run = await create_run(
+            session, version, trigger=trigger, checks=checks, session_id=cs.id, force=cs.force
+        )
         session.add(
             SessionItem(session_id=cs.id, syllabus_id=syllabus_id, version_id=version_id, run_id=run.id)
         )
