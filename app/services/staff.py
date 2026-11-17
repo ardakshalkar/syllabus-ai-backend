@@ -5,6 +5,7 @@ Caches responses in Redis to keep the admin panel responsive and reduce load on 
 """
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -26,37 +27,52 @@ SCHOOL_NAMES_ORDER = [
 ]
 
 
+# Short codes the HR system and people use for each School.
+_SCHOOL_CODES = {
+    "шэм": SCHOOL_NAMES_ORDER[0],
+    "шцт": SCHOOL_NAMES_ORDER[1],
+    "шспн": SCHOOL_NAMES_ORDER[2],
+    "шпигу": SCHOOL_NAMES_ORDER[3],
+    "шбнп": SCHOOL_NAMES_ORDER[4],
+}
+
+
+def _normalize(text: str) -> str:
+    """Lower-case, drop "(АУП)" and other bracketed notes, fold ё, squeeze spaces and doubled letters.
+
+    Folding doubled letters lets "програм" (a typo in the HR data) match "программ".
+    """
+    t = re.sub(r"\([^)]*\)", " ", text.lower()).replace("ё", "е")
+    t = re.sub(r"[^\w\s]", " ", t)
+    t = re.sub(r"(\w)\1+", r"\1", t)
+    return " ".join(t.split())
+
+
+_SCHOOLS_NORMALIZED = [(_normalize(name), name) for name in SCHOOL_NAMES_ORDER]
+
+
 def detect_school(department: str | None) -> str | None:
+    """The School a department belongs to, or None.
+
+    Matches only a School's full name or its short code. Guessing by topic words is
+    deliberately left out: it put offices such as "Отдел по управлению имуществом"
+    into the School of Law and "Департамент информационных технологий" into Digital.
+    """
     if not department:
         return None
-    d = department.strip().lower()
-    # 1. Exact or substring match against canonical school names
-    for name in SCHOOL_NAMES_ORDER:
-        if name.lower() in d or d in name.lower():
+    d = _normalize(department)
+    for normalized, name in _SCHOOLS_NORMALIZED:
+        if normalized in d:
             return name
-    # 2. Acronyms / short codes
-    if "шэм" in d:
-        return "Школа экономики и менеджмента"
-    if "шцт" in d:
-        return "Школа цифровых технологий"
-    if "шспн" in d:
-        return "Школа социальных и прикладных наук"
-    if "шпигу" in d:
-        return "Школа права и государственного управления"
-    if "шбнп" in d:
-        return "Школа базовых и междисциплинарных программ"
-    # 3. Department keywords
-    if any(k in d for k in ("экономик", "финанс", "учет", "аудит", "маркетинг", "менеджмент", "бизнес")):
-        return "Школа экономики и менеджмента"
-    if any(k in d for k in ("цифров", "информацион", "программ", "компьютер", "технолог", "it")):
-        return "Школа цифровых технологий"
-    if any(k in d for k in ("социальн", "прикладн", "язык", "гуманитарн", "истори", "философ", "психолог")):
-        return "Школа социальных и прикладных наук"
-    if any(k in d for k in ("прав", "юриспруд", "государствен", "юридическ")):
-        return "Школа права и государственного управления"
-    if any(k in d for k in ("базов", "междисциплин", "общеобразовательн")):
-        return "Школа базовых и междисциплинарных программ"
+    words = set(d.split())
+    for code, name in _SCHOOL_CODES.items():
+        if code in words:
+            return name
     return None
+
+
+class StaffApiUnavailable(RuntimeError):
+    """The staff service failed or answered in an unexpected shape (raised in prod only)."""
 
 
 class StaffEmployee(BaseModel):
@@ -149,21 +165,21 @@ async def fetch_external_employees() -> list[StaffEmployee]:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
-    except Exception as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         log.warning("failed to fetch employees from %s: %s", url, exc)
-        # If cache expired but exists or fallback needed, return empty list or fallback
-        return (
-            [StaffEmployee.model_validate(item) for item in MOCK_EMPLOYEES] if settings.env != "prod" else []
-        )
+        if settings.env == "prod":
+            raise StaffApiUnavailable(f"the staff service did not answer: {exc}") from exc
+        log.warning("using mock staff employees instead (ENV=%s)", settings.env)
+        return [StaffEmployee.model_validate(item) for item in MOCK_EMPLOYEES]
 
     if not isinstance(data, list):
         log.error("unexpected staff API response format: expected list, got %s", type(data))
-        return []
+        raise StaffApiUnavailable("the staff service sent something other than a list of employees")
 
     employees = []
     for raw in data:
         try:
-            dept = str(raw.get("department") or "").strip() or None if raw.get("department") else None
+            dept = str(raw.get("department") or "").strip() or None
             school = raw.get("school") or detect_school(dept)
             employees.append(
                 StaffEmployee(
