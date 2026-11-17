@@ -25,6 +25,7 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
@@ -56,11 +57,191 @@ _REQUESTED = "drive-catalog:requested"
 _REQUESTED_TTL_S = 120
 _STATUS_TTL_S = 30 * 24 * 3600
 UNKNOWN_LANGUAGE = "Unknown"
-# Folders a School keeps beside its course folders for reference, not syllabi: study plans and programme
-# passports (SDT's folder holds 426 study-plan files). Matched on the top-level folder's name, any language.
+
+# Folders a School keeps beside or inside its course folders for reference, archives, guidelines or templates, not syllabi.
 REFERENCE_FOLDER = re.compile(
-    r"учебн\w*\s+план|оқу\s+жосп|паспорт|study\s+plan|curricul|passport", re.IGNORECASE
+    r"учебн\w*\s+план|оқу\s+жосп|паспорт|study\s+plan|curricul|passport|"
+    r"архив|archive|\bold\b|ескі|бұрынғы|"
+    r"шаблон|үлгі|template|форма\b|"
+    r"инструкци|нұсқау|guideline|методич|положен|правил|"
+    r"расписани|кесте\w*|schedule|график|"
+    r"кэд|каталог\s+электив|рубрикатор",
+    re.IGNORECASE,
 )
+
+# Files that are clearly not syllabi: Office lock files, readmes, templates, instructions, schedules, etc.
+NON_SYLLABUS_FILE = re.compile(
+    r"^~\$|^\.|"
+    r"^(readme|read\s*me|описание|нұсқаулық)($|[\s_\-–—.:])|"
+    r"^(шаблон\w*|үлгі\w*|template\w*)($|[\s_\-–—.:])|"
+    r"^(инструкци\w*|guideline\w*|методич\w*|положен\w*|правил\w*)($|[\s_\-–—.:])|"
+    r"^(расписани\w*|график\w*|кесте\w*|schedule\w*)($|[\s_\-–—.:])|"
+    r"^(ведомост\w*|журнал\w*|тізім\w*|список\w*)($|[\s_\-–—.:])|"
+    r"^(учебн\w*\s+план|оқу\s+жосп\w*|паспорт\s+оп|study\s+plan)($|[\s_\-–—.:])",
+    re.IGNORECASE,
+)
+
+_PROGRAM_FOLDER = re.compile(r"^\s*(г?оп|г?ббб?|ббт|ep|op|gep)\s*[.:\-–—]?\s+(.+?)\s*$", re.IGNORECASE)
+_CODE_FOLDER = re.compile(r"^[678]\s?[BMDВМДbmdвмд]\s?\d{5}", re.IGNORECASE)
+
+_DEGREE_PATTERN = re.compile(
+    r"^\s*(бакалавр\w*|магистр\w*|докторант\w*|phd\b|bachelor\w*|master\w*|нпм\b|пм\b)\s*$",
+    re.IGNORECASE,
+)
+
+_YEAR_PATTERN = re.compile(
+    r"^\s*([1-4]\s*[-_]?\s*(курс|год|year)|курс\s*[1-4]|[1-4]\s*[-_]?\s*курс\w*)\s*$",
+    re.IGNORECASE,
+)
+
+_DEPARTMENT_PATTERN = re.compile(
+    r"^\s*(кафедра|департамент|department|факультет|faculty|центр|centre)\b",
+    re.IGNORECASE,
+)
+
+_LANGUAGE_PATTERN = re.compile(
+    r"^\s*("
+    r"каз[а-яёa-z]*(\s+(бөлімі|бөлім|отделение|тобы))?|"
+    r"рус[а-яёa-z]*(\s+(бөлімі|бөлім|отделение|группа))?|"
+    r"англ[а-яёa-z]*(\s+(бөлімі|бөлім|отделение))?|"
+    r"eng[a-z]*(\s+(section|group|division))?|"
+    r"kz|ru|en|qaz|"
+    r"қазақ\s+бөлімі|орыс\s+бөлімі|"
+    r"очное|заочное|дистанционн\w*|дот|"
+    r"20\d\d"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+_TEACHER_INITIALS = re.compile(
+    r"^[А-ЯЁA-Z][а-яёa-z]+(\s+[А-ЯЁA-Z]\.\s*[А-ЯЁA-Z]\.?|[_-][А-ЯЁA-Z]\.[А-ЯЁA-Z]\.?)$|"
+    r"^[А-ЯЁA-Z]\.\s*[А-ЯЁA-Z]\.?\s+[А-ЯЁA-Z][а-яёa-z]+$",
+    re.IGNORECASE,
+)
+
+
+class FolderRole(Enum):
+    WRAPPER = auto()
+    DEGREE = auto()
+    YEAR = auto()
+    DEPARTMENT = auto()
+    PROGRAM = auto()
+    LANGUAGE = auto()
+    TEACHER = auto()
+    DISCIPLINE = auto()
+
+
+def is_wrapper_folder(name: str) -> bool:
+    clean = re.sub(r"[\W_]+", " ", name).strip()
+    stripped = re.sub(
+        r"\b(силлабус\w*|syllabus\w*|силабус\w*|пән\s+бағдарлама\w*|"
+        r"осень\w*|күз\w*|весна\w*|көктем\w*|fall\w*|autumn\w*|spring\w*|"
+        r"семестр\w*|semester\w*|20\d\d[-–]\d\d\d\d|20\d\d|"
+        r"школа\w*|school\w*|мектеп\w*|вшэим|вшп|сцт|шэт|шит|"
+        r"materials|материалы|документы|documents|files|файлы)\b",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    ).strip()
+    return len(stripped) == 0
+
+
+def classify_folder_role(name: str) -> FolderRole:
+    trimmed = name.strip()
+    if is_wrapper_folder(trimmed):
+        return FolderRole.WRAPPER
+    if _DEGREE_PATTERN.search(trimmed):
+        return FolderRole.DEGREE
+    if _YEAR_PATTERN.search(trimmed):
+        return FolderRole.YEAR
+    if _DEPARTMENT_PATTERN.search(trimmed):
+        return FolderRole.DEPARTMENT
+    if _PROGRAM_FOLDER.search(trimmed) or _CODE_FOLDER.search(trimmed):
+        return FolderRole.PROGRAM
+    if _LANGUAGE_PATTERN.search(trimmed):
+        return FolderRole.LANGUAGE
+    if _TEACHER_INITIALS.search(trimmed):
+        return FolderRole.TEACHER
+    return FolderRole.DISCIPLINE
+
+
+_TRAILING_TAGS = re.compile(
+    r"[\s_\-–—]+("
+    r"20\d\d[-–/]\d\d\d\d|20\d\d|осень|весна|күз|көктем|fall|spring|autumn|семестр\s*\d|\d\s*семестр|"
+    r"каз[а-яёa-z]*|рус[а-яёa-z]*|англ[а-яёa-z]*|eng[a-z]*|kz|ru|en|qaz|"
+    r"v\d+|\d+[-_]?версия|"
+    r"[А-ЯЁA-Z][а-яёa-z]+(\s+[А-ЯЁA-Z]\.\s*[А-ЯЁA-Z]\.?|\.[А-ЯЁA-Z]\.[А-ЯЁA-Z]\.?)"
+    r")[\s_\-–—]*$",
+    re.IGNORECASE,
+)
+
+
+def extract_discipline_from_filename(filename: str) -> str:
+    stem = Path(filename).stem.strip()
+    # 1. Remove brackets with language, degree, teacher, or year tags
+    cleaned = re.sub(
+        r"\((?:каз\w*|рус\w*|англ\w*|eng\w*|kz\b|ru\b|en\b|qaz\w*|маг\w*|бак\w*|phd\b|дот\b|дневное|заочное|20\d\d(?:-20\d\d)?|[^)]*)\)",
+        " ",
+        stem,
+        flags=re.IGNORECASE,
+    )
+    # 2. Remove syllabus prefixes
+    cleaned = re.sub(
+        r"^(силлабус[а-яёa-z]*|syllabus[a-z]*|силабус[а-яёa-z]*|пән\s+бағдарламасы|рабочая\s+программа|course\s+outline)\s*(по\s+дисциплине\s*|пәні\s+бойынша\s*|по\s*|on\s*|of\s*|[.:_\-–—]|\s)\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"^(силлабус[а-яёa-z]*|syllabus[a-z]*|силабус[а-яёa-z]*)\s+", "", cleaned, flags=re.IGNORECASE)
+    # 3. Repeatedly strip trailing semester, language, and version tags
+    while True:
+        stripped = _TRAILING_TAGS.sub("", cleaned)
+        if stripped == cleaned:
+            break
+        cleaned = stripped
+
+    cleaned = re.sub(r"^[\W_]+|[\W_]+$", "", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if len(cleaned) >= 2 and not is_wrapper_folder(cleaned):
+        return nfc(cleaned)
+    return nfc(stem)
+
+
+def resolve_file_location(entry: DriveEntry, chain: list[DriveEntry]) -> tuple[str, str, str | None]:
+    """Resolves (discipline, course_id, program_folder) for a file given its ancestor folder chain."""
+    effective_chain = list(chain)
+    while effective_chain and is_wrapper_folder(effective_chain[0].name):
+        effective_chain.pop(0)
+
+    program_folder = None
+    for f in effective_chain:
+        if _PROGRAM_FOLDER.search(f.name) or _CODE_FOLDER.search(f.name):
+            program_folder = f.name
+            break
+
+    if not effective_chain:
+        discipline = extract_discipline_from_filename(entry.name)
+        return discipline, "", program_folder
+
+    idx = len(effective_chain) - 1
+    while idx >= 0:
+        folder = effective_chain[idx]
+        role = classify_folder_role(folder.name)
+        if role in (FolderRole.LANGUAGE, FolderRole.YEAR, FolderRole.TEACHER):
+            idx -= 1
+        else:
+            break
+
+    if idx >= 0:
+        candidate = effective_chain[idx]
+        role = classify_folder_role(candidate.name)
+        if role == FolderRole.DISCIPLINE:
+            return candidate.name, candidate.id, program_folder
+        discipline = extract_discipline_from_filename(entry.name)
+        return discipline, candidate.id, program_folder
+
+    discipline = extract_discipline_from_filename(entry.name)
+    return discipline, effective_chain[-1].id, program_folder
 
 
 def _status_key(folder_id: uuid.UUID) -> str:
@@ -102,10 +283,14 @@ class FoundFile:
     entry: DriveEntry
     # Drive id of the course folder it sits under, so excluding that folder excludes it.
     course_id: str = ""
+    program_folder: str | None = None
 
     @property
     def course_name(self) -> str:
-        return nfc(f"{self.discipline} · {Path(self.entry.name).stem.strip()}")[:200]
+        stem = Path(self.entry.name).stem.strip()
+        if stem.casefold() == self.discipline.casefold():
+            return nfc(self.discipline)[:200]
+        return nfc(f"{self.discipline} · {stem}")[:200]
 
 
 # A listing younger than this is reused by a read that asks for it ("Choose files" → "Save and read in"),
@@ -132,6 +317,7 @@ class Listing:
                     "discipline": f.discipline,
                     "path": f.path,
                     "course_id": f.course_id,
+                    "program_folder": f.program_folder,
                     "id": f.entry.id,
                     "name": f.entry.name,
                     "content_type": f.entry.content_type,
@@ -164,6 +350,7 @@ class Listing:
                         size=f.get("size"),
                     ),
                     f.get("course_id", ""),
+                    f.get("program_folder"),
                 )
                 for f in data.get("found", [])
             ],
@@ -175,44 +362,95 @@ class Listing:
 
 
 def list_folder_tree(client: DriveClient, root_id: str) -> Listing:
-    """Blocking. Every syllabus file below the course folders of `root_id`, what was skipped and why. Each
-    level of subfolders costs one batched request (more for a folder shared only by link, see list_children)."""
+    """Blocking. Adaptively finds every syllabus file below root_id across diverse school layouts,
+    what was skipped and why."""
     found: list[FoundFile] = []
     skipped: list[dict[str, str]] = []
-    courses: list[tuple[str, str]] = []
-    discipline: dict[str, str] = {}
-    course_of: dict[str, str] = {}
-    path: dict[str, str] = {}
-    for entry in client.list_folder(root_id):
+    folder_info: dict[str, tuple[str, str | None, str, list[DriveEntry]]] = {}
+
+    root_entries = client.list_folder(root_id)
+    pending_files: list[tuple[DriveEntry, list[DriveEntry], str]] = []
+    current_level_folders: list[DriveEntry] = []
+
+    for entry in root_entries:
         name = nfc(entry.name.strip())
-        if entry.is_folder and REFERENCE_FOLDER.search(entry.name):
-            skipped.append({"path": f"{name}/", "reason": "study plans or passports, not syllabi"})
-        elif entry.is_folder:
-            discipline[entry.id] = path[entry.id] = name
-            course_of[entry.id] = entry.id
-            courses.append((entry.id, name))
-        elif not entry.app_version_id:
-            skipped.append({"path": entry.name, "reason": "not inside a discipline folder"})
-    level = list(discipline)
-    while level:
-        next_level = []
-        for child in client.list_children(level):
-            parent = child.parent_id or ""
-            if parent not in discipline:
-                continue
-            child_path = f"{path[parent]}/{child.name}"
-            if child.is_folder:
-                discipline[child.id], path[child.id] = discipline[parent], child_path
-                course_of[child.id] = course_of[parent]
-                next_level.append(child.id)
-            elif child.app_version_id:
-                continue  # a version this app copied into Drive: already catalogued as that version
-            elif child.content_type:
-                found.append(FoundFile(discipline[parent], child_path, child, course_of[parent]))
+        if entry.is_folder:
+            if REFERENCE_FOLDER.search(name):
+                skipped.append({"path": f"{name}/", "reason": "study plans, archive or guidelines, not syllabi"})
             else:
-                skipped.append({"path": child_path, "reason": "not a .docx, .pdf or Google Doc"})
-        level = next_level
-    return Listing(sorted(courses, key=lambda c: c[1]), found, skipped)
+                folder_info[entry.id] = (name, None, name, [entry])
+                current_level_folders.append(entry)
+        else:
+            pending_files.append((entry, [], name))
+
+    depth = 0
+    while current_level_folders and depth < 10:
+        depth += 1
+        folder_ids = [f.id for f in current_level_folders]
+        next_level_folders: list[DriveEntry] = []
+
+        children = client.list_children(folder_ids)
+        for child in children:
+            parent_id = child.parent_id or ""
+            if parent_id not in folder_info:
+                continue
+            parent_name, _, parent_path, parent_chain = folder_info[parent_id]
+            child_name = nfc(child.name.strip())
+            child_path = f"{parent_path}/{child_name}"
+
+            if child.is_folder:
+                if REFERENCE_FOLDER.search(child_name):
+                    skipped.append({"path": f"{child_path}/", "reason": "study plans, archive or guidelines, not syllabi"})
+                else:
+                    child_chain = parent_chain + [child]
+                    folder_info[child.id] = (child_name, parent_id, child_path, child_chain)
+                    next_level_folders.append(child)
+            else:
+                pending_files.append((child, parent_chain, child_path))
+
+        current_level_folders = next_level_folders
+
+    courses_map: dict[str, str] = {}
+    seen_file_ids: set[str] = set()
+
+    for entry, chain, file_path in pending_files:
+        if entry.app_version_id:
+            continue
+        if entry.id in seen_file_ids:
+            continue
+        seen_file_ids.add(entry.id)
+
+        file_name = nfc(entry.name.strip())
+
+        if not entry.content_type:
+            skipped.append({"path": file_path, "reason": "not a .docx, .pdf or Google Doc"})
+            continue
+
+        if NON_SYLLABUS_FILE.search(file_name):
+            skipped.append({"path": file_path, "reason": "not a syllabus (readme, template or administrative file)"})
+            continue
+
+        discipline, course_id, program_folder = resolve_file_location(entry, chain)
+        found.append(
+            FoundFile(
+                discipline=discipline,
+                path=file_path,
+                entry=entry,
+                course_id=course_id,
+                program_folder=program_folder,
+            )
+        )
+        course_key = course_id or discipline
+        courses_map[course_key] = discipline
+
+    parent_ids = {entry_tuple[1] for entry_tuple in folder_info.values() if entry_tuple[1]}
+    for fid, (fname, fparent, fpath, fchain) in folder_info.items():
+        if fid not in parent_ids and classify_folder_role(fname) == FolderRole.DISCIPLINE:
+            if fid not in courses_map:
+                courses_map[fid] = fname
+
+    courses = sorted(courses_map.items(), key=lambda c: c[1])
+    return Listing(courses, found, skipped)
 
 
 async def folder_listing(folder_id: uuid.UUID, *, max_age_s: float | None) -> tuple[Listing, datetime]:
@@ -431,7 +669,12 @@ async def _apply(
 
     if by_slug:
         ids = await session.scalars(sa.select(Course.id).where(Course.slug.in_(list(by_slug))))
-        await program_links.link_by_name(session, list(ids))
+        hints = {
+            course.id: f.program_folder
+            for slug, f in by_slug.items()
+            if f.program_folder and (course := courses.get(slug))
+        }
+        await program_links.link_by_name(session, list(ids), program_hints=hints)
 
     # Files that left the folder: their syllabi stay with their results, hidden from lists.
     gone = await session.scalars(
