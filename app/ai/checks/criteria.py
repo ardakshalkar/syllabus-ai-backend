@@ -176,14 +176,18 @@ def build_user_prompt(
     ]
     parts = [f"Syllabus:\n<<<\n{document_text(content)}\n>>>"]
     if report.issues:
-        parts.append(
-            STRUCTURE_HINTS + "\n".join(f"- {i.message}" for i in report.issues)
-        )
+        parts.append(STRUCTURE_HINTS + "\n".join(f"- {i.message}" for i in report.issues))
     for name in sorted(
         {s.required_context for s in specs if s.required_context and s.required_context in context}
     ):
         parts.append(f"{name}:\n{context[name]}")
-    parts.append(f"Principle {specs[0].principle}: {specs[0].principle_name}")
+    principles = sorted({(s.principle, s.principle_name) for s in specs})
+    if len(principles) == 1:
+        parts.append(f"Principle {specs[0].principle}: {specs[0].principle_name}")
+    else:  # one request for several principles (the "single" check mode)
+        parts.append("Principles:\n" + "\n".join(f"{n}. {name}" for n, name in principles))
+        for item, spec in zip(criteria, specs, strict=True):
+            item["principle"] = str(spec.principle)
     parts.append("Criteria to evaluate:\n" + json.dumps(criteria, ensure_ascii=False))
     return "\n\n".join(parts)
 

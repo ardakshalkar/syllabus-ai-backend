@@ -64,6 +64,10 @@ class SessionOut(Schema):
     only_unchecked: bool
     only_checked: bool
     estimated_cost_usd: float | None = None
+    check_mode: str | None = Field(
+        None, description="standard | single (services.check_mode); None: standard"
+    )
+    check_model: str | None = Field(None, description="the model of a single-request check")
     progress: SessionProgress
 
 
@@ -105,6 +109,15 @@ class EstimateOut(Schema):
     reading_usd: float = Field(description="part for reading the documents' structure")
     ocr_usd: float = Field(description="part for reading scans")
     minutes: int = Field(description="rough time to finish, in minutes")
+    check_mode: str = Field(description="how the AI will check, set by the administrator: standard | single")
+    check_model: str | None = Field(description="the model of a single-request check")
+    check_mode_label: str = Field(description='e.g. "One request: qwen4-max"')
+    check_per_syllabus_usd: float = Field(
+        description="checking one syllabus against the criteria in this mode"
+    )
+    check_price_measured: bool = Field(
+        description="true: measured from recent checks in this mode; false: from the model's list price"
+    )
     scan_files: list[EstimateFile]
     unreadable_files: list[EstimateFile]
 
@@ -285,3 +298,28 @@ class NotificationOut(Schema):
     payload: dict
     read_at: datetime | None
     created_at: datetime
+
+
+class CheckModeOption(Schema):
+    mode: str = Field(description="standard | single")
+    model: str | None
+    label: str
+    per_syllabus_usd: float = Field(description="checking one syllabus against the criteria in this mode")
+    measured: bool = Field(description="true: from recent checks in this mode; false: from list prices")
+
+
+class CheckModeOut(Schema):
+    """How the AI checks syllabi (Administration → AI check), and what each way costs per syllabus."""
+
+    mode: str
+    model: str | None
+    label: str
+    billed: bool
+    updated_at: datetime | None
+    updated_by_name: str | None
+    options: list[CheckModeOption]
+
+
+class CheckModeIn(Schema):
+    mode: str = Field(description="standard | single")
+    model: str | None = None
