@@ -92,6 +92,7 @@ async def create(
     notify_school: bool,
     only_unchecked: bool = False,
     only_checked: bool = False,
+    estimated_cost_usd: float | None = None,
 ) -> tuple[CheckSession, list[uuid.UUID]]:
     """Returns the session and the run ids to dispatch after commit (empty when scheduled)."""
     school_id = await _scope_school(session, scope_type, scope_ref)
@@ -112,12 +113,36 @@ async def create(
         notify_school=notify_school,
         only_unchecked=only_unchecked,
         only_checked=only_checked,
+        estimated_cost_usd=estimated_cost_usd,
         created_by=principal.id,
     )
     session.add(cs)
     await session.flush()
     run_ids = [] if scheduled_at and scheduled_at > _now() else await start(session, cs)
     return cs, run_ids
+
+
+async def scope_versions(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    scope_type: SessionScope,
+    scope_ref: uuid.UUID | None,
+    semester: str,
+    only_unchecked: bool,
+    only_checked: bool,
+) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """(syllabus id, version id) a check with this scope and filters would take, for the estimate before it."""
+    school_id = await _scope_school(session, scope_type, scope_ref)
+    ensure_can_manage(principal, school_id)
+    probe = CheckSession(
+        scope_type=scope_type,
+        scope_ref=scope_ref,
+        semester=semester,
+        only_unchecked=only_unchecked,
+        only_checked=only_checked,
+    )
+    return await _resolve_versions(session, probe)
 
 
 async def _resolve_versions(session: AsyncSession, cs: CheckSession) -> list[tuple[uuid.UUID, uuid.UUID]]:

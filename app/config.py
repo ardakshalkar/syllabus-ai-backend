@@ -122,6 +122,17 @@ class Settings(BaseSettings):
     ocr_model: str = ""
     ocr_dpi: int = 150  # pages are rendered at this resolution before they are sent
     ocr_max_pages: int = 40  # a longer scan is read up to here
+    # Longest answer for one page. A normal page is under 1,300 tokens; this stops a model stuck in a loop.
+    ocr_max_output_tokens: int = 4096
+    # The cost estimate before a check (app/services/cost_estimate.py) measures prices from the last 30 days of
+    # checks; these stand in until there is enough history. US dollars, from the Nov 2026 traces on OpenRouter.
+    estimate_check_usd: float = 0.02  # checking one syllabus against the criteria
+    estimate_reading_usd: float = 0.002  # reading a document's structure the first time
+    estimate_ocr_page_usd: float = 0.0013  # one scanned page (gemini-3.1-flash-lite)
+    estimate_decision_usd: float = (
+        0.004  # one decision-model request, which OpenRouter does not list a price for
+    )
+    estimate_seconds_per_file: float = 30
 
     precheck_ttl_s: int = 3600
 
