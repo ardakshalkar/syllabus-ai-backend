@@ -66,6 +66,17 @@ async def test_translates_into_the_other_languages():
     assert set(out[1].translations) == {"en"}
 
 
+async def test_compliant_findings_are_not_translated():
+    passed = _result("2.1", "Old text.", "No change suggested for this criterion.").model_copy(
+        update={"status": ResultStatus.compliant}
+    )
+    out = await translate_results(
+        FakeProvider(), [passed, _result("2.2", "Missing.")], source_language="English"
+    )
+    assert set(out[0].translations) == {"en"}
+    assert out[1].translations["ru"].explanation == "[ru] Missing."
+
+
 async def test_failed_translation_keeps_the_original():
     class Failing(FakeProvider):
         async def complete_json(self, **kwargs):

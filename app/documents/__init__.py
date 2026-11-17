@@ -107,6 +107,9 @@ class LlmTrace(Document):
     error: str | None = None
     # What the server charged for the request, in US dollars, when it reports it (OpenRouter's usage.cost).
     cost_usd: float | None = None
+    # The prompt tokens the host read from its prompt cache, and which host answered (OpenRouter).
+    cached_tokens: int | None = None
+    provider: str | None = None
     created_at: datetime = Field(default_factory=_now)
 
     class Settings:

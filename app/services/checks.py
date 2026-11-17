@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import alignment, pipeline, structure
+from app.ai import alignment, blocks, pipeline, structure
 from app.ai.extraction import ExtractionError
 from app.ai.llm import get_llm
 from app.ai.types import EvaluationOutput, ExtractedContent, language_code
@@ -89,9 +89,12 @@ async def load_content(version: SyllabusVersion) -> ExtractedContent:
     A version read from Google Drive is downloaded for the extraction only and not kept."""
     cached = await ExtractedDocument.find_one(ExtractedDocument.version_id == version.id)
     if cached and cached.extractor == structure.wanted_extractor():
+        if await blocks.ensure(cached.content, get_llm()):  # read before the blocks existed
+            await cached.save()
         return cached.content
     async with files.local_copy(version) as path:
         content, extractor = await structure.read_syllabus(path, get_llm())
+    await blocks.ensure(content, get_llm())
     if cached:
         await cached.delete()
     await ExtractedDocument(version_id=version.id, content=content, extractor=extractor).insert()

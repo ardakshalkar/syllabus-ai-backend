@@ -91,7 +91,8 @@ def _by_principle(specs: list[CriterionSpec]) -> list[list[CriterionSpec]]:
 
 def _in_requests(specs: list[CriterionSpec], requests: int) -> list[list[CriterionSpec]]:
     """The principles in `requests` groups of consecutive principles with about as many criteria each;
-    0 or fewer: one group per principle. 1 is the "single" check mode: every criterion in one request."""
+    0 or fewer: one group per principle. 1: every criterion in one request (EXPLAIN_CALLS=1, or the "single"
+    check mode)."""
     principles = _by_principle(specs)
     if requests <= 0 or requests >= len(principles):
         return principles
@@ -185,7 +186,7 @@ async def evaluate(
     undecided = [s for s in to_llm if s.code not in decisions]
     statuses = {code: d.status for code, d in decisions.items()}
     confidences = {code: d.confidence for code, d in decisions.items()}
-    jobs = [(b, True) for b in _by_principle(to_explain)] + [
+    jobs = [(b, True) for b in _in_requests(to_explain, settings.explain_calls)] + [
         (b, False) for b in _in_requests(undecided, criteria_calls)
     ]
     progress = Progress(CRITERIA, criteria_total=len(specs), principles_total=len(jobs))
@@ -227,9 +228,16 @@ async def evaluate(
         f"{dm.model_version}+{llm.model_version}" if dm is not None and decisions else llm.model_version
     )
     await on_phase(progress)
-    tasks = [asyncio.ensure_future(evaluate_batch(b, explain)) for b, explain in jobs]
+    # Every principle's request begins with the same syllabus. Sent all at once, none finds it in the host's
+    # prompt cache; one principle sent first puts it there, and the others then read it at the cache price.
+    lead = jobs[:1] if len(jobs) > 1 else []
+    tasks: list[asyncio.Future[list[CriterionResultData]]] = []
+    batch_results: list[list[CriterionResultData]] = []
     try:
-        batch_results = await asyncio.gather(*tasks)
+        for wave in (lead, jobs[len(lead) :]):
+            started = [asyncio.ensure_future(evaluate_batch(b, explain)) for b, explain in wave]
+            tasks += started
+            batch_results += await asyncio.gather(*started)
     except BaseException:
         # One principle failed or the run was cancelled: stop the LLM calls still waiting or running.
         for task in tasks:

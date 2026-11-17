@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import pipeline, structure
+from app.ai import blocks, pipeline, structure
 from app.ai.extraction import ExtractionError
 from app.ai.llm import get_llm
 from app.auth.rbac import Principal, ensure_course_lead
@@ -92,6 +92,7 @@ async def run_job(job_id: str) -> bool:
             rubric = await load_rubric(session)
             how = check_mode.evaluator(await check_mode.current(session))
         content, _ = await structure.read_syllabus(path, get_llm())
+        await blocks.ensure(content, get_llm())
         from app.services.checks import literature_in_library, program_context
 
         programs = await program_context(uuid.UUID(state["course_id"]), content, record=False)

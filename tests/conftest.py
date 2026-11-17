@@ -25,6 +25,7 @@ def _no_hosted_models(monkeypatch):
     monkeypatch.setenv("DECISION_MODEL", "")
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
     monkeypatch.setenv("OCR_MODEL", "")
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "")  # host pinning in .env changes the request the tests expect
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

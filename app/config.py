@@ -98,6 +98,20 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 180
     llm_max_retries: int = 3
     llm_output_language: str = "English"
+    # OpenRouter only: the hosts of LLM_MODEL to try first, in order, comma-separated (e.g. "NextBit,DeepInfra").
+    # A check sends the same syllabus with every principle, and a host can serve that repeated start from its
+    # prompt cache at a lower price, but only when every request of the check reaches the same host. When the
+    # listed hosts are down or busy, OpenRouter falls back to the others. Empty: OpenRouter picks per request.
+    llm_provider_order: str = ""
+    # With a decision model: how many requests write the evidence and explanations of a syllabus. 0 sends one
+    # per principle (about 9), each carrying the whole syllabus again; 1 sends every criterion in one request,
+    # which reads the syllabus once; 2 or more split the principles between that many requests. On 20 syllabi
+    # one request cost half as much as one per principle and lost no quotes (2026-11-17).
+    explain_calls: int = 1
+    # The explanation step reads the syllabus as numbered lines with a category each ([12·policy] text) and
+    # cites a line by its number; the quote is then taken from that line, so it is always in the document.
+    # The lines are sorted into categories once per syllabus version (app.ai.blocks) and kept.
+    explain_blocks: bool = True
     # After a check, its explanations and recommendations are translated from LLM_OUTPUT_LANGUAGE into the
     # app's other languages (English, Russian, Kazakh). TRANSLATION_MODEL names a model on the same server
     # for that (e.g. a Gemini model on OpenRouter, stronger in Kazakh); empty: the chat model translates.
