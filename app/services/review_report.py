@@ -7,6 +7,7 @@ the app stays the way to read it on screen.
 
 import asyncio
 import logging
+import re
 import smtplib
 import uuid
 from datetime import datetime
@@ -35,6 +36,13 @@ _FONTS = [
     ("arial.ttf", "arialbd.ttf"),
 ]
 _FONT_DIRS = ["/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "C:/Windows/Fonts"]
+# A backup for the characters DejaVu does not have, such as Chinese quoted from a Chinese-language syllabus:
+# (folder, regular, bold). WenQuanYi Micro Hei is the Debian package fonts-wqy-microhei; Microsoft YaHei ships
+# with Windows. Without one the report still renders, with those characters left blank.
+_CJK_FONTS = [
+    ("/usr/share/fonts/truetype/wqy", "wqy-microhei.ttc", "wqy-microhei.ttc"),
+    ("C:/Windows/Fonts", "msyh.ttc", "msyhbd.ttc"),
+]
 
 
 class NoFont(RuntimeError):
@@ -58,17 +66,34 @@ def _fonts() -> tuple[Path, Path]:
     )
 
 
+def _cjk_fonts() -> tuple[Path, Path] | None:
+    configured = get_settings().report_font_dir
+    candidates = [(configured, r, b) for _, r, b in _CJK_FONTS] if configured else []
+    for folder, regular, bold in candidates + _CJK_FONTS:
+        r, b = Path(folder) / regular, Path(folder) / bold
+        if r.is_file():
+            return r, b if b.is_file() else r
+    return None
+
+
 def _short_school(name: str) -> str:
     return name.removeprefix("School of ").strip()
 
 
 class _Pdf(FPDF):
-    def __init__(self, footer_text: str):
+    def __init__(self, footer_text: str, backup_font: bool = False):
         super().__init__(format="A4")
         self.footer_text = footer_text
         regular, bold = _fonts()
         self.add_font("Body", "", str(regular))
         self.add_font("Body", "B", str(bold))
+        cjk = _cjk_fonts() if backup_font else None
+        if cjk:
+            self.add_font("Backup", "", str(cjk[0]))
+            self.add_font("Backup", "B", str(cjk[1]))
+            self.set_fallback_fonts(["Backup"])
+        elif backup_font:
+            log.warning("No CJK font for the PDF report: Chinese, Japanese or Korean text will be left blank")
         self.set_auto_page_break(auto=True, margin=16)
         self.set_margins(16, 16, 16)
 
@@ -94,11 +119,25 @@ def _counts(c: dict) -> str:
     return " · ".join(p for p in parts if p) or "no findings"
 
 
+# Chinese, Japanese and Korean letters and their full-width punctuation: what DejaVu lacks and the backup has.
+_CJK = re.compile(r"[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]")
+
+
+def _has_cjk(report: dict) -> bool:
+    """Whether any text in the report needs the backup font: loading it is slow, so most reports skip it."""
+    return any(
+        isinstance(v, str) and _CJK.search(v)
+        for c in report["courses"]
+        for f in c["findings"]
+        for v in (c["course_name"], *f.values())
+    )
+
+
 def render_pdf(report: dict) -> bytes:
     """Set the report in a PDF: a summary page, then each course on a page of its own."""
     semester = report["semester"]
     scope = _short_school(report["school_name"]) if report.get("school_name") else "Whole university"
-    pdf = _Pdf(f"Narxoz University · Syllabus review · {semester} · {scope}")
+    pdf = _Pdf(f"Narxoz University · Syllabus review · {semester} · {scope}", backup_font=_has_cjk(report))
     pdf.add_page()
     t = report["totals"]
     generated = report["generated_at"]
