@@ -66,6 +66,8 @@ For every criterion write:
 - "explanation": why the evidence leads to the given status, in one short sentence. Leave it empty ("") for
   Compliant: the quote shows it.
 - "recommendation": one concrete edit the professor can make, in one sentence. Leave it empty ("") for Compliant.
+- Only explanation and recommendation are left empty for Compliant: every criterion, Compliant included, still
+  needs its quote from the syllabus.
 - Write explanation and recommendation in {language}. Keep evidence in the syllabus's original language.
 - Judge only what is written. Do not assume content that is not in the document.
 - Be brief: the answer is read by software, not by people."""

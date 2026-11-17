@@ -105,12 +105,13 @@ class Settings(BaseSettings):
     llm_provider_order: str = ""
     # With a decision model: how many requests write the evidence and explanations of a syllabus. 0 sends one
     # per principle (about 9), each carrying the whole syllabus again; 1 sends every criterion in one request,
-    # which reads the syllabus once; 2 or more split the principles between that many requests.
-    explain_calls: int = 0
+    # which reads the syllabus once; 2 or more split the principles between that many requests. On 20 syllabi
+    # one request cost half as much as one per principle and lost no quotes (2026-11-17).
+    explain_calls: int = 1
     # The explanation step reads the syllabus as numbered lines with a category each ([12·policy] text) and
     # cites a line by its number; the quote is then taken from that line, so it is always in the document.
     # The lines are sorted into categories once per syllabus version (app.ai.blocks) and kept.
-    explain_blocks: bool = False
+    explain_blocks: bool = True
     # After a check, its explanations and recommendations are translated from LLM_OUTPUT_LANGUAGE into the
     # app's other languages (English, Russian, Kazakh). TRANSLATION_MODEL names a model on the same server
     # for that (e.g. a Gemini model on OpenRouter, stronger in Kazakh); empty: the chat model translates.
