@@ -244,3 +244,30 @@ async def test_drive_courses_never_go_to_an_imported_program(ref):
         )
     await drive_catalog.sync_folder(await _link(ref, _school_folder()))
     assert {c.program_id for _, c in await _drive_syllabi()} == {ref["programs"]["cs"].id}
+
+
+async def test_delete_folder_removes_folder_and_its_drive_syllabi(ref, client_for):
+    root = _school_folder()
+    folder_id = await _link(ref, root)
+    await drive_catalog.sync_folder(folder_id)
+    admin = client_for(ref["users"]["admin.digital"])
+
+    syllabi_before = await _drive_syllabi()
+    assert len(syllabi_before) == 2
+
+    # Check a syllabus first to verify it can be deleted even when checked
+    syllabus, _ = syllabi_before[0]
+    async with pg.session_scope() as session:
+        version = await session.scalar(
+            sa.select(SyllabusVersion).where(SyllabusVersion.syllabus_id == syllabus.id)
+        )
+        await checks.create_run(session, version, trigger=checks.Trigger.professor_manual)
+
+    res = await admin.delete(f"/folders/{folder_id}")
+    assert res.status_code == 204
+
+    syllabi_after = await _drive_syllabi()
+    assert len(syllabi_after) == 0
+    async with pg.session_scope() as session:
+        assert (await session.get(UploadFolder, folder_id)) is None
+

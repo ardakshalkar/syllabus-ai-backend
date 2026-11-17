@@ -14,9 +14,17 @@ from app.models.org import (
 from app.models.rubric import Criterion, Principle, RubricVersion
 from app.models.semester import Semester
 from app.models.syllabus import AssessmentRun, CriterionOutcome, Syllabus, SyllabusVersion
-from app.models.workflow import ApprovalEvent, CheckSession, Notification, ReviewReport, SessionItem
+from app.models.workflow import (
+    ApprovalEvent,
+    AppSetting,
+    CheckSession,
+    Notification,
+    ReviewReport,
+    SessionItem,
+)
 
 __all__ = [
+    "AppSetting",
     "ApprovalEvent",
     "AssessmentRun",
     "Base",

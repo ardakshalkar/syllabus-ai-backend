@@ -434,3 +434,45 @@ async def test_scan_ocr_cannot_read_stays_cannot_check(tmp_path, monkeypatch):
     monkeypatch.setattr(ocr, "_model_transcriber", lambda: transcribe)
     with pytest.raises(NoTextError, match="none could be read"):
         await structure.read_syllabus(_scanned_pdf(tmp_path), FakeProvider())
+
+
+async def test_single_mode_checks_every_criterion_in_one_request(tmp_path):
+    content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=True)))
+    per_principle, single = _CountingProvider(), _CountingProvider()
+    a = await pipeline.evaluate(content, _specs(), per_principle, trace=False, decider=None)
+    b = await pipeline.evaluate(content, _specs(), single, trace=False, decider=None, criteria_calls=1)
+
+    criteria_calls = [codes for purpose, codes in single.calls if purpose == "criteria"]
+    assert len(criteria_calls) == 1
+    assert len([c for p, c in per_principle.calls if p == "criteria"]) > 1
+    # The same criteria are judged either way; only the number of requests changes.
+    assert sorted(criteria_calls[0]) == sorted(
+        c for p, codes in per_principle.calls if p == "criteria" for c in codes
+    )
+    assert {r.criterion_id: r.status for r in a.results} == {r.criterion_id: r.status for r in b.results}
+
+
+def test_one_request_prompt_names_each_criterions_principle(tmp_path):
+    import json
+
+    from app.ai.checks.criteria import build_user_prompt
+    from app.ai.checks.technical import build_report
+
+    content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=False)))
+    specs = [s for s in _specs() if s.evaluation_type == EvaluationType.ai_semantic]
+    prompt = build_user_prompt(specs, content, build_report(content), {})
+    assert "Principles:\n1. " in prompt
+    criteria = json.loads(prompt.split("Criteria to evaluate:\n", 1)[1])
+    assert {c["principle"] for c in criteria} == {str(s.principle) for s in specs}
+    one = [s for s in specs if s.principle == 1]
+    assert "Principle 1: " in build_user_prompt(one, content, build_report(content), {})
+
+
+def test_check_mode_evaluator():
+    from app.services.check_mode import SINGLE, CheckMode, evaluator
+
+    single = evaluator(CheckMode(SINGLE, "qwen/qwen4-max"))
+    assert single.decider is None and single.criteria_calls == 1
+    standard = evaluator(CheckMode())
+    assert standard.criteria_calls == 0
+    assert CheckMode(SINGLE, "qwen/qwen4-max").label == "One request: qwen4-max"

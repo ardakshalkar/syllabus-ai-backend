@@ -30,7 +30,7 @@ from app.models import (
     SyllabusVersion,
     UploadFolder,
 )
-from app.services import run_live
+from app.services import check_mode, run_live
 from app.services.checks import create_run, refresh_ai_status
 from app.services.notifications import notify, users_with_role
 from app.workers import dispatch
@@ -101,6 +101,7 @@ async def create(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Select at least one check")
     if scheduled_at and scheduled_at.tzinfo is None:
         scheduled_at = scheduled_at.replace(tzinfo=UTC)
+    mode = await check_mode.current(session)
     cs = CheckSession(
         name=name.strip(),
         scope_type=scope_type,
@@ -114,6 +115,8 @@ async def create(
         only_unchecked=only_unchecked,
         only_checked=only_checked,
         estimated_cost_usd=estimated_cost_usd,
+        check_mode=mode.mode,
+        check_model=mode.model,
         created_by=principal.id,
     )
     session.add(cs)

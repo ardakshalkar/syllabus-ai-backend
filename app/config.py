@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     # are not Compliant. Empty: the chat model decides every status itself, one request per principle.
     decision_model: str = ""
     decision_url: str = "https://openrouter.ai/api/alpha/decisions"
+    # The models the administrator can pick for the "one request" check mode (services.check_mode): one request
+    # decides and explains every criterion of a syllabus. Comma-separated ids on the LLM_BASE_URL server.
+    check_models: str = "google/gemma-4-31b-it,qwen/qwen4-max"
     checker_version: str = "2026.11"
     # Read a syllabus as Markdown (markitdown) and have the chat model extract its outcomes, assessment, weeks
     # and sections (app/ai/structure.py). Off, or when that fails: the line-based regex extraction.
@@ -147,6 +150,10 @@ class Settings(BaseSettings):
         0.004  # one decision-model request, which OpenRouter does not list a price for
     )
     estimate_seconds_per_file: float = 30
+    # A one-request check of a syllabus, until there is history for its model: tokens sent and received,
+    # including the quote repair that sometimes follows (measured on 20 syllabi, Nov 2026), at the model's list price.
+    estimate_single_tokens_in: int = 15_000
+    estimate_single_tokens_out: int = 4_800
 
     precheck_ttl_s: int = 3600
 

@@ -42,7 +42,7 @@ from app.models import (
     Syllabus,
     SyllabusVersion,
 )
-from app.services import drive_catalog, program_links, run_live, run_progress, translations
+from app.services import check_mode, drive_catalog, program_links, run_live, run_progress, translations
 from app.services.notifications import notify
 from app.services.rubric import load_rubric
 from app.storage import files
@@ -226,12 +226,12 @@ async def execute_run(run_id: uuid.UUID) -> None:
             log.warning("check run %s was interrupted, starting it again", run_id)
         elif run.status != RunStatus.queued:
             return
-        if run.session_id:
-            cs = await session.get(CheckSession, run.session_id)
-            if cs and cs.status == SessionStatus.paused:
-                run.status, run.started_at = RunStatus.queued, None
-                await _set_item_status(session, [run_id], SessionItemStatus.queued)
-                return
+        cs = await session.get(CheckSession, run.session_id) if run.session_id else None
+        mode = check_mode.of_session(cs) or await check_mode.current(session)
+        if cs is not None and cs.status == SessionStatus.paused:
+            run.status, run.started_at = RunStatus.queued, None
+            await _set_item_status(session, [run_id], SessionItemStatus.queued)
+            return
         run.status = RunStatus.processing
         run.started_at = _now()
         await _set_item_status(session, [run_id], SessionItemStatus.processing)
@@ -259,10 +259,13 @@ async def execute_run(run_id: uuid.UUID) -> None:
             content = await load_content(version)
             library_report = await literature_in_library(content) if CheckKind.library in checks else None
             programs = await program_context(course_id, content)
+            how = check_mode.evaluator(mode)
             output = await pipeline.evaluate(
                 content,
                 rubric.specs,
-                get_llm(),
+                how.llm,
+                decider=how.decider,
+                criteria_calls=how.criteria_calls,
                 checks=checks,
                 context=programs.context,
                 unavailable=programs.unavailable,
