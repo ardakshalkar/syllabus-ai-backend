@@ -164,7 +164,11 @@ async def _replace(
     session.add_all(CourseProgram(course_id=course_id, program_id=p, source=source) for p in ids)
 
 
-async def link_by_name(session: AsyncSession, course_ids: Iterable[uuid.UUID] | None = None) -> int:
+async def link_by_name(
+    session: AsyncSession,
+    course_ids: Iterable[uuid.UUID] | None = None,
+    program_hints: dict[uuid.UUID, str] | None = None,
+) -> int:
     """Re-match courses (all, or these) against program folders and the programs' course lists.
     Returns how many courses matched a program either way."""
     index = await NameIndex.load(session)
@@ -175,8 +179,10 @@ async def link_by_name(session: AsyncSession, course_ids: Iterable[uuid.UUID] | 
     if course_ids is not None:
         query = query.where(Course.id.in_(list(course_ids)))
     matched = 0
+    hints = program_hints or {}
     for course_id, name, discipline, school_id in (await session.execute(query)).tuples():
-        in_folder = folders.match(discipline, name, school_id)
+        hint = hints.get(course_id)
+        in_folder = folders.match(hint or discipline, name, school_id)
         # A course folder (discipline) is usually the cleaner name; the file name comes second. A program folder
         # is no course name, so then only the file name ("ОП МО · Силлабус Теория МО") is looked up.
         file_part = name.split(" · ", 1)[1] if " · " in (name or "") else name

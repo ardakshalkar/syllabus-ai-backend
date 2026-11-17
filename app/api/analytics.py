@@ -106,12 +106,20 @@ async def analysis_report_pdf(
     principal: CurrentUser,
     session: DbSession,
     school_id: uuid.UUID | None = None,
+    syllabus_id: uuid.UUID | None = None,
     include: Literal["summary", "critical", "all"] = "critical",
+    lang: Literal["en", "ru", "kk"] = "ru",
 ):
     """The same report as a PDF file."""
     try:
         _, pdf, name = await review_report.build(
-            session, _reviewer(principal), semester=semester, school_id=school_id, include=include
+            session,
+            _reviewer(principal),
+            semester=semester,
+            school_id=school_id,
+            include=include,
+            syllabus_id=syllabus_id,
+            lang=lang,
         )
     except (analysis.ReportTooLarge, review_report.NoFont) as exc:
         raise _report_errors(exc) from exc

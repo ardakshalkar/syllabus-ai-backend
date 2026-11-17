@@ -33,8 +33,20 @@ Include = Literal["summary", "critical", "all"]
 _FONTS = [
     ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
     ("arial.ttf", "arialbd.ttf"),
+    ("Arial.ttf", "Arial Bold.ttf"),
+    ("Arial.ttf", "Arial-Bold.ttf"),
+    ("Arial Unicode.ttf", "Arial Bold.ttf"),
+    ("LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf"),
 ]
-_FONT_DIRS = ["/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "C:/Windows/Fonts"]
+_FONT_DIRS = [
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/dejavu",
+    "/usr/share/fonts/truetype/liberation",
+    "/System/Library/Fonts/Supplemental",
+    "/Library/Fonts",
+    "/System/Library/Fonts",
+    "C:/Windows/Fonts",
+]
 
 
 class NoFont(RuntimeError):
@@ -60,6 +72,88 @@ def _fonts() -> tuple[Path, Path]:
 
 def _short_school(name: str) -> str:
     return name.removeprefix("School of ").strip()
+
+
+_PDF_I18N = {
+    "en": {
+        "title": "Narxoz University · Syllabus review",
+        "whole_univ": "Whole university",
+        "syllabi": "syllabi",
+        "checked": "checked",
+        "generated": "generated",
+        "lbl_syllabi": "Syllabi",
+        "lbl_critical": "With critical findings",
+        "lbl_major": "Major only",
+        "lbl_no_ai": "No AI result yet",
+        "by_school": "By School",
+        "most_common": "Most common findings",
+        "courses_critical": "Courses with critical findings",
+        "courses": "Courses",
+        "critical_mark": "[critical]",
+        "critical_word": "critical",
+        "major_word": "major",
+        "minor_word": "minor",
+        "no_findings": "no findings",
+        "disclaimer": "Findings are suggestions from the AI check for the professor to review, not an approval decision.",
+        "no_prof": "No professor matched",
+        "sev_critical": "Critical",
+        "sev_major": "Major",
+        "sev_minor": "Minor",
+        "fix": "Fix:",
+    },
+    "ru": {
+        "title": "Университет Нархоз · Проверка силлабусов",
+        "whole_univ": "Весь университет",
+        "syllabi": "силлабусов",
+        "checked": "проверено",
+        "generated": "сформировано",
+        "lbl_syllabi": "Силлабусы",
+        "lbl_critical": "С критическими замечаниями",
+        "lbl_major": "Только существенные",
+        "lbl_no_ai": "Пока нет результата ИИ",
+        "by_school": "По школам",
+        "most_common": "Наиболее частые замечания",
+        "courses_critical": "Курсы с критическими замечаниями",
+        "courses": "Курсы",
+        "critical_mark": "[критическое]",
+        "critical_word": "критических",
+        "major_word": "существенных",
+        "minor_word": "незначительных",
+        "no_findings": "без замечаний",
+        "disclaimer": "Замечания сформированы проверкой ИИ в помощь преподавателю и не являются решением об утверждении.",
+        "no_prof": "Преподаватель не сопоставлен",
+        "sev_critical": "Критические",
+        "sev_major": "Существенные",
+        "sev_minor": "Незначительные",
+        "fix": "Исправление:",
+    },
+    "kk": {
+        "title": "Нархоз Университеті · Силлабустарды тексеру",
+        "whole_univ": "Бүкіл университет",
+        "syllabi": "силлабус",
+        "checked": "тексерілді",
+        "generated": "құрастырылған уақыты",
+        "lbl_syllabi": "Силлабустар",
+        "lbl_critical": "Сыни ескертулері бар",
+        "lbl_major": "Тек елеулі",
+        "lbl_no_ai": "Әзірге ЖИ нәтижесі жоқ",
+        "by_school": "Мектептер бойынша",
+        "most_common": "Ең жиі кездесетін ескертулер",
+        "courses_critical": "Сыни ескертулері бар курстар",
+        "courses": "Курстар",
+        "critical_mark": "[сыни]",
+        "critical_word": "сыни",
+        "major_word": "елеулі",
+        "minor_word": "болмашы",
+        "no_findings": "ескерту жоқ",
+        "disclaimer": "Ескертулер оқытушыға көмек ретінде ЖИ тексеруімен құрастырылған және бекіту шешімі болып табылмайды.",
+        "no_prof": "Оқытушы сәйкестендірілмеген",
+        "sev_critical": "Сыни",
+        "sev_major": "Елеулі",
+        "sev_minor": "Болмашы",
+        "fix": "Түзету жолы:",
+    },
+}
 
 
 class _Pdf(FPDF):
@@ -88,112 +182,165 @@ class _Pdf(FPDF):
 _SEVERITY_COLOR = {"critical": (190, 40, 40), "major": (170, 110, 10), "minor": (110, 110, 110)}
 
 
-def _counts(c: dict) -> str:
-    parts = [f"{c['critical']} critical" if c["critical"] else "", f"{c['major']} major" if c["major"] else "",
-             f"{c['minor']} minor" if c["minor"] else ""]
-    return " · ".join(p for p in parts if p) or "no findings"
+def _counts(c: dict, lang: str = "en") -> str:
+    i18n = _PDF_I18N.get(lang, _PDF_I18N["en"])
+    parts = [
+        f"{c['critical']} {i18n['critical_word']}" if c.get("critical") else "",
+        f"{c['major']} {i18n['major_word']}" if c.get("major") else "",
+        f"{c['minor']} {i18n['minor_word']}" if c.get("minor") else "",
+    ]
+    return " · ".join(p for p in parts if p) or i18n["no_findings"]
 
 
-def render_pdf(report: dict) -> bytes:
+def _finding_text(f: dict, lang: str) -> tuple[str, str, str]:
+    """Returns (headline, explanation, recommendation_or_fix) in requested language."""
+    texts = f.get("texts") or {}
+    translations = f.get("translations") or {}
+    trans = translations.get(lang) if isinstance(translations, dict) else None
+
+    prob = None
+    if isinstance(texts, dict) and "problem" in texts and isinstance(texts["problem"], dict):
+        prob = texts["problem"].get(lang)
+    headline = prob or f.get("name", "")
+
+    expl = ""
+    if trans and isinstance(trans, dict) and trans.get("explanation"):
+        expl = trans["explanation"]
+    else:
+        expl = f.get("explanation") or ""
+
+    fix = None
+    if isinstance(texts, dict) and "fix" in texts and isinstance(texts["fix"], dict):
+        fix = texts["fix"].get(lang)
+    if not fix and trans and isinstance(trans, dict) and trans.get("recommendation"):
+        fix = trans["recommendation"]
+    if not fix:
+        fix = f.get("recommendation") or ""
+
+    return headline, expl, fix
+
+
+def render_pdf(report: dict, lang: str = "en") -> bytes:
     """Set the report in a PDF: a summary page, then each course on a page of its own."""
+    i18n = _PDF_I18N.get(lang, _PDF_I18N["en"])
     semester = report["semester"]
-    scope = _short_school(report["school_name"]) if report.get("school_name") else "Whole university"
-    pdf = _Pdf(f"Narxoz University · Syllabus review · {semester} · {scope}")
-    pdf.add_page()
-    t = report["totals"]
-    generated = report["generated_at"]
-    when = generated.strftime("%d %b %Y, %H:%M") if isinstance(generated, datetime) else str(generated)
-    pdf.line_text(f"Narxoz University · Syllabus review · {semester}", 9, color=(120, 120, 120))
-    pdf.line_text(scope, 20, bold=True, gap=1)
-    pdf.line_text(f"{t['found']} syllabi · {t['checked']} checked · generated {when}", 9, color=(120, 120, 120), gap=5)
+    scope = _short_school(report["school_name"]) if report.get("school_name") else i18n["whole_univ"]
+    footer_text = f"{i18n['title']} · {semester} · {scope}"
+    pdf = _Pdf(footer_text)
 
-    for label, value, color in [
-        ("Syllabi", t["found"], (30, 30, 30)),
-        ("With critical findings", t["with_critical"], _SEVERITY_COLOR["critical"]),
-        ("Major only", t["major_only"], _SEVERITY_COLOR["major"]),
-        ("No AI result yet", t["cannot_check"] + t["not_checked"], (30, 30, 30)),
-    ]:
-        pdf.set_font("Body", "", 10)
-        pdf.set_text_color(90, 90, 90)
-        pdf.cell(60, 7, label)
-        pdf.set_font("Body", "B", 11)
-        pdf.set_text_color(*color)
-        pdf.cell(0, 7, str(value), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(4)
+    is_single_course = len(report.get("courses", [])) == 1 and report.get("single_syllabus")
+    if not is_single_course:
+        pdf.add_page()
+        t = report["totals"]
+        generated = report["generated_at"]
+        when = generated.strftime("%d %b %Y, %H:%M") if isinstance(generated, datetime) else str(generated)
+        pdf.line_text(f"{i18n['title']} · {semester}", 9, color=(120, 120, 120))
+        pdf.line_text(scope, 20, bold=True, gap=1)
+        pdf.line_text(f"{t['found']} {i18n['syllabi']} · {t['checked']} {i18n['checked']} · {i18n['generated']} {when}", 9, color=(120, 120, 120), gap=5)
 
-    if not report.get("school_id") and len(report["schools"]) > 1:
-        pdf.line_text("By School", 13, bold=True)
-        for s in report["schools"]:
+        for label, value, color in [
+            (i18n["lbl_syllabi"], t["found"], (30, 30, 30)),
+            (i18n["lbl_critical"], t["with_critical"], _SEVERITY_COLOR["critical"]),
+            (i18n["lbl_major"], t["major_only"], _SEVERITY_COLOR["major"]),
+            (i18n["lbl_no_ai"], t["cannot_check"] + t["not_checked"], (30, 30, 30)),
+        ]:
             pdf.set_font("Body", "", 10)
-            pdf.set_text_color(30, 30, 30)
-            pdf.cell(110, 6, _short_school(s["school_name"]))
-            pdf.cell(25, 6, f"{s['found']}", align="R")
-            pdf.cell(0, 6, f"{s['with_critical']} critical", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_text_color(90, 90, 90)
+            pdf.cell(60, 7, label)
+            pdf.set_font("Body", "B", 11)
+            pdf.set_text_color(*color)
+            pdf.cell(0, 7, str(value), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(4)
 
-    issues = sorted(report["issues"], key=lambda i: (not i["critical"], -i["syllabi"]))[:10]
-    if issues:
-        pdf.line_text("Most common findings", 13, bold=True)
-        for n, i in enumerate(issues, 1):
-            mark = "  [critical]" if i["critical"] else ""
-            pdf.line_text(f"{n}. {i['criterion_id']} · {i['name']} — {i['syllabi']} ({i['percent']}%){mark}", 10, gap=0.5)
+        if not report.get("school_id") and len(report.get("schools", [])) > 1:
+            pdf.line_text(i18n["by_school"], 13, bold=True)
+            for s in report["schools"]:
+                pdf.set_font("Body", "", 10)
+                pdf.set_text_color(30, 30, 30)
+                pdf.cell(110, 6, _short_school(s["school_name"]))
+                pdf.cell(25, 6, f"{s['found']}", align="R")
+                pdf.cell(0, 6, f"{s['with_critical']} {i18n['critical_word']}", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(4)
+
+        issues = sorted(report.get("issues", []), key=lambda i: (not i.get("critical"), -i.get("syllabi", 0)))[:10]
+        if issues:
+            pdf.line_text(i18n["most_common"], 13, bold=True)
+            for n, i in enumerate(issues, 1):
+                mark = f"  {i18n['critical_mark']}" if i.get("critical") else ""
+                pdf.line_text(f"{n}. {i['criterion_id']} · {i['name']} — {i['syllabi']} ({i['percent']}%){mark}", 10, gap=0.5)
+            pdf.ln(3)
+
+        courses = report.get("courses", [])
+        if courses:
+            title = i18n["courses_critical"] if report.get("include") == "critical" else i18n["courses"]
+            pdf.line_text(f"{title} ({len(courses)})", 13, bold=True)
+            for n, c in enumerate(courses, 1):
+                pdf.line_text(f"{n}. {c['course_name']} — {_counts(c, lang)}", 10, gap=0.5)
         pdf.ln(3)
+        pdf.line_text(i18n["disclaimer"], 8, color=(120, 120, 120))
 
-    courses = report["courses"]
-    if courses:
-        title = "Courses with critical findings" if report["include"] == "critical" else "Courses"
-        pdf.line_text(f"{title} ({len(courses)})", 13, bold=True)
-        for n, c in enumerate(courses, 1):
-            pdf.line_text(f"{n}. {c['course_name']} — {_counts(c)}", 10, gap=0.5)
-    pdf.ln(3)
-    pdf.line_text(
-        "Findings are suggestions from the AI check for the professor to review, not an approval decision.",
-        8, color=(120, 120, 120),
-    )
-
+    courses = report.get("courses", [])
     for c in courses:
         pdf.add_page()
         pdf.line_text(c["course_name"], 15, bold=True, gap=1)
-        who = c["professor_name"] or "No professor matched"
-        pdf.line_text(f"{who} · {c['language']} · {_short_school(c['school_name'])} · {c['program_name']}", 9,
+        who = c.get("professor_name") or i18n["no_prof"]
+        pdf.line_text(f"{who} · {c.get('language', '')} · {_short_school(c.get('school_name', ''))} · {c.get('program_name', '')}", 9,
                       color=(120, 120, 120), gap=1)
-        pdf.line_text(_counts(c), 9, bold=True, color=(90, 90, 90), gap=4)
+        pdf.line_text(_counts(c, lang), 9, bold=True, color=(90, 90, 90), gap=4)
         for severity in ("critical", "major", "minor"):
-            found = [f for f in c["findings"] if f["severity"] == severity]
+            found = [f for f in c.get("findings", []) if f.get("severity") == severity]
             if not found:
                 continue
-            pdf.line_text(f"{severity.capitalize()} · {len(found)}", 12, bold=True, color=_SEVERITY_COLOR[severity])
+            sev_label = i18n["sev_critical"] if severity == "critical" else i18n["sev_major"] if severity == "major" else i18n["sev_minor"]
+            pdf.line_text(f"{sev_label} · {len(found)}", 12, bold=True, color=_SEVERITY_COLOR[severity])
             for f in found:
+                headline, expl, fix = _finding_text(f, lang)
                 if severity == "minor":
-                    pdf.line_text(f"{f['criterion_id']} {f['name']} — {f['recommendation'] or f['explanation']}", 9, gap=1)
+                    summary_text = fix or expl
+                    pdf.line_text(f"{f['criterion_id']} {headline} — {summary_text}", 9, gap=1)
                     continue
-                pdf.line_text(f"{f['criterion_id']} · {f['principle_name']}", 8, color=(120, 120, 120), gap=0.5)
-                pdf.line_text(f["name"], 10, bold=True, gap=0.5)
-                if f["explanation"]:
-                    pdf.line_text(f["explanation"], 9.5, gap=0.8)
-                if f["evidence"]:
+                pdf.line_text(f"{f['criterion_id']} · {f.get('principle_name', '')}", 8, color=(120, 120, 120), gap=0.5)
+                pdf.line_text(headline, 10, bold=True, gap=0.5)
+                if expl:
+                    pdf.line_text(expl, 9.5, gap=0.8)
+                if f.get("evidence"):
                     pdf.set_x(pdf.l_margin + 4)
                     pdf.set_font("Body", "", 9)
                     pdf.set_text_color(90, 90, 90)
                     pdf.multi_cell(0, 4.5, f"“{f['evidence']}”", align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                     pdf.ln(0.8)
-                if f["recommendation"]:
-                    pdf.line_text(f"Fix: {f['recommendation']}", 9.5, color=(20, 90, 60), gap=3)
+                if fix:
+                    pdf.line_text(f"{i18n['fix']} {fix}", 9.5, color=(20, 90, 60), gap=3)
     return bytes(pdf.output())
 
 
-def filename(report: dict) -> str:
+def filename(report: dict, syllabus_name: str | None = None) -> str:
+    if syllabus_name:
+        slug = "-".join(syllabus_name.split())[:50]
+        return f"Syllabus-review-{slug}.pdf"
     scope = _short_school(report["school_name"]) if report.get("school_name") else "University"
     slug = "-".join(f"{scope} {report['semester']}".split())
     return f"Syllabus-review-{slug}.pdf"
 
 
 async def build(
-    session: AsyncSession, principal: Principal, *, semester: str, school_id: uuid.UUID | None, include: Include
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    semester: str,
+    school_id: uuid.UUID | None,
+    include: Include,
+    syllabus_id: uuid.UUID | None = None,
+    lang: str = "en",
 ) -> tuple[dict, bytes, str]:
-    report = await analysis.report(session, principal, semester=semester, school_id=school_id, include=include)
-    pdf = await asyncio.to_thread(render_pdf, report)
-    return report, pdf, filename(report)
+    report = await analysis.report(
+        session, principal, semester=semester, school_id=school_id, include=include, syllabus_id=syllabus_id
+    )
+    if syllabus_id and report.get("courses"):
+        report["single_syllabus"] = True
+    pdf = await asyncio.to_thread(render_pdf, report, lang=lang)
+    single_name = report["courses"][0]["course_name"] if syllabus_id and report.get("courses") else None
+    return report, pdf, filename(report, single_name)
 
 
 async def _recipients(session: AsyncSession) -> list[str]:
