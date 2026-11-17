@@ -1,5 +1,6 @@
 import uuid
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
@@ -115,7 +116,9 @@ async def analysis_report_pdf(
         )
     except (analysis.ReportTooLarge, review_report.NoFont) as exc:
         raise _report_errors(exc) from exc
-    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    # The name holds the School's name, often in Cyrillic, which a plain header cannot carry (RFC 6266).
+    disposition = f"attachment; filename*=UTF-8''{quote(name)}"
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": disposition})
 
 
 @router.post("/analysis/report/send", response_model=SentReportOut, status_code=status.HTTP_201_CREATED)
