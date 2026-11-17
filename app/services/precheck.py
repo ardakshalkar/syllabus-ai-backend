@@ -17,7 +17,7 @@ from app.ai.llm import get_llm
 from app.auth.rbac import Principal, ensure_course_lead
 from app.config import get_settings
 from app.db.pg import session_scope
-from app.services import run_progress
+from app.services import check_mode, run_progress
 from app.services.rubric import load_rubric
 from app.services.syllabi import validate_upload
 from app.storage import cache, files
@@ -90,6 +90,7 @@ async def run_job(job_id: str) -> bool:
         await _update(job_id, status="Processing", phase="Reading document", live=live)
         async with session_scope() as session:
             rubric = await load_rubric(session)
+            how = check_mode.evaluator(await check_mode.current(session))
         content, _ = await structure.read_syllabus(path, get_llm())
         from app.services.checks import literature_in_library, program_context
 
@@ -102,7 +103,9 @@ async def run_job(job_id: str) -> bool:
         output = await pipeline.evaluate(
             content,
             rubric.specs,
-            get_llm(),
+            how.llm,
+            decider=how.decider,
+            criteria_calls=how.criteria_calls,
             context=programs.context,
             unavailable=programs.unavailable,
             trace=False,

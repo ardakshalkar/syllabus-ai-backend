@@ -24,7 +24,8 @@ from app.schemas.admin import (
     StaffEmployeeOut,
 )
 from app.schemas.catalog import CourseOut, ProgramOut, SchoolOut
-from app.services import admin, staff
+from app.schemas.work import CheckModeIn, CheckModeOut
+from app.services import admin, check_mode, cost_estimate, staff
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 Admin = Annotated[Principal, require_role(Role.admin)]
@@ -116,6 +117,27 @@ async def list_employees(
 
     result.sort(key=sort_key)
     return result
+
+
+async def _check_mode_out(session: DbSession) -> CheckModeOut:
+    return CheckModeOut(
+        **await check_mode.describe(session),
+        billed=cost_estimate.billed(),
+        options=await cost_estimate.mode_options(session),
+    )
+
+
+@router.get(
+    "/check-mode", response_model=CheckModeOut, summary="How the AI checks syllabi, and the price of each way"
+)
+async def get_check_mode(_: Admin, session: DbSession):
+    return await _check_mode_out(session)
+
+
+@router.put("/check-mode", response_model=CheckModeOut, summary="Choose how the AI checks syllabi")
+async def set_check_mode(body: CheckModeIn, principal: Admin, session: DbSession):
+    await check_mode.change(session, body.mode, body.model, principal.id)
+    return await _check_mode_out(session)
 
 
 @router.get("/stats", response_model=AdminStatsOut)

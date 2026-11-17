@@ -14,6 +14,10 @@ A file is opened once to learn which it is (FileProbe in Mongo); versions are im
 The prices are measured, not guessed: the tokens the last 30 days of checks used per syllabus (LlmTrace), at
 OpenRouter's published price of each model, or at what OpenRouter reported charging when the trace has it. With
 too little history, the ESTIMATE_* settings stand in. Models on the university's own server cost nothing per use.
+
+Checking is priced for the check mode the administrator chose (services.check_mode), from the runs of check
+sessions that ran in that mode; a mode with too little history is priced from its model's list price
+(ESTIMATE_SINGLE_TOKENS_*) or, for "standard", from ESTIMATE_CHECK_USD.
 """
 
 import asyncio
@@ -35,7 +39,9 @@ from app.ai.extraction import ExtractionError, NoTextError, extract
 from app.config import get_settings
 from app.documents import ExtractedDocument, FileProbe, LlmTrace
 from app.enums import SessionStatus
-from app.models import CheckSession, Course, SessionItem, Syllabus, SyllabusVersion
+from app.models import AssessmentRun, CheckSession, Course, SessionItem, Syllabus, SyllabusVersion
+from app.services import check_mode
+from app.services.check_mode import CheckMode
 from app.storage import files
 
 log = logging.getLogger(__name__)
@@ -58,13 +64,15 @@ class UnitCosts:
     reading_usd: float  # reading a document's structure (outcomes, weeks, assessment) the first time
     ocr_page_usd: float  # one scanned page
     seconds_per_file: float
+    check_measured: bool = False  # check_usd comes from recent checks in this mode, not from list prices
 
 
-_units: tuple[float, UnitCosts] | None = None
+# Per check mode (services.check_mode), each kept for an hour.
+_units: dict[CheckMode, tuple[float, UnitCosts]] = {}
 _prices: tuple[float, dict[str, tuple[float, float]]] | None = None
 
 
-def _billed() -> bool:
+def billed() -> bool:
     s = get_settings()
     if s.llm_provider == "fake":
         return False
@@ -143,22 +151,57 @@ async def _seconds_per_file(session: AsyncSession) -> float:
     return rates[len(rates) // 2] if rates else get_settings().estimate_seconds_per_file
 
 
-async def unit_costs(session: AsyncSession) -> UnitCosts:
-    """What one syllabus, one first reading and one scanned page cost lately; kept for an hour."""
-    global _units
-    if not _billed():
+async def _runs_in_mode(session: AsyncSession, mode: CheckMode, since: datetime) -> list[uuid.UUID]:
+    """The check runs of the last HISTORY_DAYS that ran in `mode` (their session's mode; a session from
+    before the setting existed ran in "standard")."""
+    query = (
+        sa.select(AssessmentRun.id)
+        .join(CheckSession, CheckSession.id == AssessmentRun.session_id)
+        .where(AssessmentRun.created_at >= since)
+    )
+    if mode.mode == check_mode.SINGLE:
+        query = query.where(CheckSession.check_mode == mode.mode, CheckSession.check_model == mode.model)
+    else:
+        query = query.where(
+            sa.or_(CheckSession.check_mode.is_(None), CheckSession.check_mode == check_mode.STANDARD)
+        )
+    return list((await session.scalars(query)).all())
+
+
+def _listed_check_usd(mode: CheckMode, prices: dict[str, tuple[float, float]]) -> float | None:
+    """A one-request check at its model's list price, before there is history for it."""
+    if mode.mode != check_mode.SINGLE or not mode.model or mode.model not in prices:
+        return None
+    s = get_settings()
+    price_in, price_out = prices[mode.model]
+    return s.estimate_single_tokens_in * price_in + s.estimate_single_tokens_out * price_out
+
+
+async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> UnitCosts:
+    """What one syllabus (checked in `mode`, by default the administrator's current one), one first reading
+    and one scanned page cost lately; kept for an hour."""
+    if mode is None:
+        mode = await check_mode.current(session)
+    if not billed():
         return UnitCosts(False, 0.0, 0.0, 0.0, await _seconds_per_file(session))
-    if _units and time.monotonic() - _units[0] < 3600:
-        return _units[1]
+    cached = _units.get(mode)
+    if cached and time.monotonic() - cached[0] < 3600:
+        return cached[1]
     s = get_settings()
     seconds = await _seconds_per_file(session)
     prices = await _openrouter_prices()
     since = datetime.now(UTC) - timedelta(days=HISTORY_DAYS)
     check_usd, reading_usd, page_usd = s.estimate_check_usd, s.estimate_reading_usd, s.estimate_ocr_page_usd
+    listed = _listed_check_usd(mode, prices)
+    if listed is not None:
+        check_usd = listed
+    measured = False
     try:
-        per_run = {"created_at": {"$gte": since}, "error": None, "run_id": {"$ne": None}}
-        runs = len(await LlmTrace.get_pymongo_collection().distinct("run_id", per_run))
+        run_ids = await _runs_in_mode(session, mode, since)
+        per_run = {"created_at": {"$gte": since}, "error": None, "run_id": {"$in": run_ids}}
+        runs = len(await LlmTrace.get_pymongo_collection().distinct("run_id", per_run)) if run_ids else 0
         if runs >= MIN_HISTORY_RUNS:
+            measured = True
             total = 0.0
             for group in await _traces({**per_run, "purpose": {"$nin": ["ocr", "structure"]}}):
                 cost = _group_cost(group, prices)
@@ -180,8 +223,8 @@ async def unit_costs(session: AsyncSession) -> UnitCosts:
                 reading_usd = cost / group["calls"]
     except Exception:  # the estimate must still answer without history
         log.exception("could not measure check costs from the traces; using the ESTIMATE_* settings")
-    units = UnitCosts(True, check_usd, reading_usd, page_usd, seconds)
-    _units = (time.monotonic(), units)
+    units = UnitCosts(True, check_usd, reading_usd, page_usd, seconds, measured)
+    _units[mode] = (time.monotonic(), units)
     return units
 
 
@@ -299,7 +342,8 @@ async def estimate(
             )
             unreadable_files.append({"filename": version.filename, "course": course, "reason": reason})
 
-    units = await unit_costs(session)
+    mode = await check_mode.current(session)
+    units = await unit_costs(session, mode)
     already = len(read_before)
     check_usd = (already + text + scans) * units.check_usd
     reading_usd = (text + scans) * units.reading_usd
@@ -333,6 +377,29 @@ async def estimate(
         "reading_usd": _money(reading_usd + unknown * readable_share * units.reading_usd),
         "ocr_usd": _money(ocr_usd + unknown * scan_share * scan_extra),
         "minutes": max(1, math.ceil(seconds / 60)) if checked else 0,
+        "check_mode": mode.mode,
+        "check_model": mode.model,
+        "check_mode_label": mode.label,
+        "check_per_syllabus_usd": _money(units.check_usd),
+        "check_price_measured": units.check_measured,
         "scan_files": scan_files[:LISTED],
         "unreadable_files": unreadable_files[:LISTED],
     }
+
+
+async def mode_options(session: AsyncSession) -> list[dict[str, Any]]:
+    """Every check mode the administrator can choose, with what checking one syllabus costs in it."""
+    modes = [CheckMode()] + [CheckMode(check_mode.SINGLE, m) for m in check_mode.allowed_models()]
+    options = []
+    for mode in modes:
+        units = await unit_costs(session, mode)
+        options.append(
+            {
+                "mode": mode.mode,
+                "model": mode.model,
+                "label": mode.label,
+                "per_syllabus_usd": _money(units.check_usd),
+                "measured": units.check_measured,
+            }
+        )
+    return options

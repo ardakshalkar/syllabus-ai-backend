@@ -43,6 +43,10 @@ class CheckSession(UUIDPk, CreatedAt, Base):
     # The estimated cost in US dollars the person who started the check saw and agreed to (POST
     # /sessions/estimate); None for checks started before the estimate existed or by a script.
     estimated_cost_usd: Mapped[float | None] = mapped_column(sa.Numeric(10, 2, asdecimal=False))
+    # How the AI checks this session's syllabi (services.check_mode), fixed when the session is created so it
+    # runs the way its estimate was priced. None: created before the setting existed, i.e. "standard".
+    check_mode: Mapped[str | None] = mapped_column(sa.String(40))
+    check_model: Mapped[str | None] = mapped_column(sa.String(200))
     created_by: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"))
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
@@ -93,3 +97,16 @@ class ReviewReport(UUIDPk, CreatedAt, Base):
     recipients: Mapped[list[str]] = mapped_column(sa.JSON, default=list)
     filename: Mapped[str] = mapped_column(sa.String(200))
     sent_by: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id"))
+
+
+class AppSetting(Base):
+    """A setting the administrator changes in the app rather than in .env, e.g. how the AI checks syllabi."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(sa.String(80), primary_key=True)
+    value: Mapped[dict] = mapped_column(sa.JSON)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id", ondelete="SET NULL"))

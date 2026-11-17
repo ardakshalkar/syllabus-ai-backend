@@ -89,6 +89,21 @@ def _by_principle(specs: list[CriterionSpec]) -> list[list[CriterionSpec]]:
     return [list(g) for _, g in groupby(sorted(specs, key=lambda s: s.principle), key=lambda s: s.principle)]
 
 
+def _in_requests(specs: list[CriterionSpec], requests: int) -> list[list[CriterionSpec]]:
+    """The principles in `requests` groups of consecutive principles with about as many criteria each;
+    0 or fewer: one group per principle. 1 is the "single" check mode: every criterion in one request."""
+    principles = _by_principle(specs)
+    if requests <= 0 or requests >= len(principles):
+        return principles
+    groups: list[list[CriterionSpec]] = [[]]
+    share = len(specs) / requests
+    for principle in principles:
+        if groups[-1] and len(groups) < requests and len(groups[-1]) + len(principle) / 2 > share:
+            groups.append([])
+        groups[-1] += principle
+    return groups
+
+
 def _cannot_verify(spec: CriterionSpec, why: str, recommendation: str = "") -> CriterionResultData:
     return CriterionResultData(
         criterion_id=spec.code,
@@ -119,10 +134,14 @@ async def evaluate(
     on_phase: Phase = _noop,
     decider: "DecisionMaker | None | object" = _FROM_SETTINGS,
     library_report: library.LibraryReport | None = None,
+    criteria_calls: int = 0,
 ) -> EvaluationOutput:
     """With a decision model (`decider`), it gives every criterion its status in one request and the chat model
     (`llm`) writes evidence and explanations for every decision, including Compliant. Without one,
     the chat model does both, one request per principle.
+
+    `criteria_calls`: without a decision model, how many requests the chat model gets: 0 one per principle,
+    1 every criterion in one request, which reads the syllabus once (services.check_mode "single").
 
     `library_report` (library.check_literature) decides the library criterion by rule, without a model.
     `unavailable`: for a context that is missing for a known reason, (why, what to do) for its criteria."""
@@ -166,14 +185,17 @@ async def evaluate(
     undecided = [s for s in to_llm if s.code not in decisions]
     statuses = {code: d.status for code, d in decisions.items()}
     confidences = {code: d.confidence for code, d in decisions.items()}
-    jobs = [(b, True) for b in _by_principle(to_explain)] + [(b, False) for b in _by_principle(undecided)]
+    jobs = [(b, True) for b in _by_principle(to_explain)] + [
+        (b, False) for b in _in_requests(undecided, criteria_calls)
+    ]
     progress = Progress(CRITERIA, criteria_total=len(specs), principles_total=len(jobs))
     # Same limit as the LLM client's, applied here too so `running` lists only principles really in flight
     # (and, with one slot, they go in rubric order).
     slots = asyncio.Semaphore(settings.llm_max_concurrency)
 
     async def evaluate_batch(batch: list[CriterionSpec], explain: bool) -> list[CriterionResultData]:
-        name = f"{batch[0].principle}. {batch[0].principle_name}"
+        first, last = batch[0].principle, batch[-1].principle
+        name = f"{first}. {batch[0].principle_name}" if first == last else f"Principles {first}–{last}"
         async with slots:
             progress.running.append(name)
             await on_phase(progress)
@@ -243,7 +265,7 @@ async def evaluate(
         }
         if broken:
             # Retry only affected principles. A quotation error must not silently erase a substantive finding.
-            for batch in _by_principle([s for s in to_llm if s.code in broken]):
+            for batch in _in_requests([s for s in to_llm if s.code in broken], criteria_calls):
                 try:
                     repaired = await asyncio.wait_for(
                         repair_evidence(

@@ -120,7 +120,7 @@ async def test_estimate_prices_scans_by_page(ref, client_for, tmp_path, monkeypa
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
     get_settings.cache_clear()
 
-    async def units(session):
+    async def units(session, mode=None):
         return cost_estimate.UnitCosts(True, 0.02, 0.002, 0.001, 30)
 
     monkeypatch.setattr(cost_estimate, "unit_costs", units)
