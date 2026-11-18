@@ -100,6 +100,17 @@ class TechnicalReport(BaseModel):
     unassessed_outcomes: list[str] = Field(default_factory=list)
 
 
+class QuoteContext(BaseModel):
+    """Where a quote stands in the syllabus, so it can be shown in place rather than as a bare fragment: the table
+    row that holds it (its non-empty cells, the one with the quote, and the column names when the table has
+    them), or the paragraph."""
+
+    cells: list[str] = Field(default_factory=list)
+    header: list[str] = Field(default_factory=list)  # same length as cells, or empty
+    cell: int | None = None  # index in cells of the one holding the quote
+    text: str = ""  # the paragraph, when the quote is not in a table
+
+
 class CriterionResultData(BaseModel):
     criterion_id: str
     status: ResultStatus
@@ -111,6 +122,7 @@ class CriterionResultData(BaseModel):
     evidence_verified: bool | None = None
     # The block (ExtractedContent.blocks, counted from 1) the evidence was taken from, when the model cited one.
     evidence_block: int | None = None
+    evidence_context: QuoteContext | None = None
     # The language explanation and recommendation are written in, and their translations into the other
     # languages of the app, keyed by language code. Results stored before translation have neither.
     language: str | None = None

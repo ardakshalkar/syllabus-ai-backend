@@ -416,3 +416,14 @@ def get_translation_llm() -> LLMProvider:
     if s.llm_provider == "ollama":
         return OllamaProvider(s.translation_model or None, cap)
     return VllmProvider(s.translation_model or None, cap)
+
+
+def get_structure_llm() -> LLMProvider:
+    """The model that reads a syllabus's structure (app.ai.structure): STRUCTURE_MODEL on the same server, or the
+    chat model."""
+    s = get_settings()
+    if s.llm_provider == "fake" or not s.structure_model:
+        return get_llm()
+    if s.llm_provider == "ollama":
+        return OllamaProvider(s.structure_model)
+    return VllmProvider(s.structure_model)

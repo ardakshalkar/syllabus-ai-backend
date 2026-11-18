@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import alignment, blocks, pipeline, structure
 from app.ai.extraction import ExtractionError
-from app.ai.llm import get_llm
+from app.ai.llm import get_llm, get_structure_llm
 from app.ai.types import EvaluationOutput, ExtractedContent, language_code
 from app.config import get_settings
 from app.db.pg import session_scope
@@ -83,17 +83,35 @@ async def create_run(
     return run
 
 
+def _broken_layer(version: SyllabusVersion, content: ExtractedContent) -> bool:
+    """A PDF's cached content came from a broken text layer that OCR would now read instead."""
+    from app.ai import ocr
+    from app.ai.markdown import looks_broken
+
+    return (
+        version.filename.lower().endswith(".pdf")
+        and not content.read_by_ocr
+        and ocr.enabled()
+        and looks_broken(content.raw_text)
+    )
+
+
 async def load_content(version: SyllabusVersion) -> ExtractedContent:
     """Extracted content is cached per version in Mongo; versions are immutable so it never goes stale, but a
-    cache entry made by another extractor than the one configured is redone (e.g. after a fallback).
-    A version read from Google Drive is downloaded for the extraction only and not kept."""
+    cache entry made by another extractor than the one configured is redone (e.g. after a fallback), and so is a
+    PDF whose broken text layer was read before such PDFs went to OCR. A version read from Google Drive is downloaded for the extraction only and not kept."""
     cached = await ExtractedDocument.find_one(ExtractedDocument.version_id == version.id)
-    if cached and cached.extractor == structure.wanted_extractor():
+    # A PDF read from a broken text layer before OCR took those over is read again, by OCR this time.
+    if (
+        cached
+        and cached.extractor == structure.wanted_extractor()
+        and not _broken_layer(version, cached.content)
+    ):
         if await blocks.ensure(cached.content, get_llm()):  # read before the blocks existed
             await cached.save()
         return cached.content
     async with files.local_copy(version) as path:
-        content, extractor = await structure.read_syllabus(path, get_llm())
+        content, extractor = await structure.read_syllabus(path, get_structure_llm())
     await blocks.ensure(content, get_llm())
     if cached:
         await cached.delete()

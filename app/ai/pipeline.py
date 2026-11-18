@@ -13,6 +13,7 @@ from app.ai.checks.technical import build_report, evaluate_rule
 from app.ai.decisions import Decision, DecisionMaker, get_decider
 from app.ai.evidence import evidence_found, recover_table_quote, verify
 from app.ai.llm import LLMError, LLMProvider
+from app.ai.quote_context import context_of
 from app.ai.types import (
     CriterionResultData,
     CriterionSpec,
@@ -294,6 +295,12 @@ async def evaluate(
                     results[r.criterion_id] = r
             ordered = [results[s.code] for s in specs if s.code in results]
         ordered = [verify(r, content.raw_text, settings.evidence_match_threshold) for r in ordered]
+        ordered = [
+            r.model_copy(update={"evidence_context": context_of(r.evidence, content.raw_text)})
+            if r.evidence and r.evidence_verified
+            else r
+            for r in ordered
+        ]
     else:
         ordered = [r.model_copy(update={"evidence": ""}) for r in ordered]
 

@@ -35,7 +35,7 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import structure
+from app.ai import ocr, structure
 from app.ai.extraction import ExtractionError, NoTextError, extract
 from app.config import get_settings
 from app.documents import ExtractedDocument, FileProbe, LlmTrace
@@ -56,6 +56,14 @@ DEFAULT_SCAN_PAGES = 8
 HISTORY_DAYS = 30
 MIN_HISTORY_RUNS = 3
 LISTED = 50  # file names returned per group
+# Tokens (in, out) per syllabus where no history says otherwise, measured on the Law School's 22 syllabi (Nov
+# 2026): reading its structure, sorting its lines (only with BLOCKS_SORT_BY_MODEL), translating its findings.
+READ_TOKENS = (8_000, 1_300)
+SORT_TOKENS = (9_000, 2_300)
+TRANSLATE_TOKENS = (2_600, 5_100)
+# The traces that read a document once per version, priced as reading rather than as checking: they carry no
+# run_id ("blocks" once cost as much as the check itself and was counted nowhere).
+READING = ("structure", "blocks")
 
 
 @dataclass
@@ -178,16 +186,36 @@ async def _runs_in_mode(session: AsyncSession, mode: CheckMode, since: datetime)
     return list((await session.scalars(query)).all())
 
 
+def _at(tokens: tuple[float, float], model: str, prices: dict[str, tuple[float, float]]) -> float | None:
+    price = ai_servers.price_of(model, prices)
+    return None if price is None else tokens[0] * price[0] + tokens[1] * price[1]
+
+
 def _listed_check_usd(mode: CheckMode, prices: dict[str, tuple[float, float]]) -> float | None:
-    """A one-request check at its model's list price, before there is history for it."""
+    """A one-request check at its model's list price, before there is history for it, with the translation of its
+    findings (TRANSLATION_MODEL, or the check's model) that follows every check."""
     if mode.mode != check_mode.SINGLE or not mode.model:
         return None
-    price = ai_servers.price_of(mode.model, prices)
-    if price is None:
-        return None
     s = get_settings()
-    price_in, price_out = price
-    return s.estimate_single_tokens_in * price_in + s.estimate_single_tokens_out * price_out
+    check = _at((s.estimate_single_tokens_in, s.estimate_single_tokens_out), mode.model, prices)
+    if check is None:
+        return None
+    if s.translate_results:
+        check += _at(TRANSLATE_TOKENS, s.translation_model or mode.model, prices) or 0.0
+    return check
+
+
+def _reading_usd(
+    tokens: dict[str, tuple[float, float]], prices: dict[str, tuple[float, float]]
+) -> float | None:
+    """Reading one new document at the prices of the models that will read it: its structure (STRUCTURE_MODEL or
+    the chat model) and, with BLOCKS_SORT_BY_MODEL, the sorting of its lines (the chat model). `tokens` holds
+    the tokens one call took lately by purpose; READ_TOKENS and SORT_TOKENS stand in for a purpose with none."""
+    s = get_settings()
+    total = _at(tokens.get("structure", READ_TOKENS), s.structure_model or s.llm_model, prices)
+    if total is not None and s.blocks_sort_by_model and s.explain_blocks:
+        total += _at(tokens.get("blocks", SORT_TOKENS), s.llm_model, prices) or 0.0
+    return total
 
 
 async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> UnitCosts:
@@ -222,7 +250,7 @@ async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> Un
         if runs >= MIN_HISTORY_RUNS:
             measured = True
             total = 0.0
-            for group in await _traces({**per_run, "purpose": {"$nin": ["ocr", "structure"]}}):
+            for group in await _traces({**per_run, "purpose": {"$nin": ["ocr", *READING]}}):
                 decision = group["_id"]["model"] == s.decision_model
                 if not chat_paid and not decision:
                     continue
@@ -234,15 +262,25 @@ async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> Un
                     cost = group["tokens_in"] * price[0] + group["tokens_out"] * price[1]
                 total += cost
             check_usd = total / runs
-        others = {"created_at": {"$gte": since}, "error": None, "purpose": {"$in": ["ocr", "structure"]}}
+        others = {"created_at": {"$gte": since}, "error": None, "purpose": {"$in": ["ocr", *READING]}}
+        reads: dict[str, list[float]] = {}  # purpose -> [calls, tokens in, tokens out], over every model
         for group in await _traces(others) if chat_paid else []:
-            cost = _group_cost(group, prices)
-            if cost is None or not group["calls"]:
+            purpose = group["_id"]["purpose"]
+            if purpose != "ocr":
+                totals = reads.setdefault(purpose, [0, 0, 0])
+                for i, key in enumerate(("calls", "tokens_in", "tokens_out")):
+                    totals[i] += group[key]
                 continue
-            if group["_id"]["purpose"] == "ocr":
+            cost = _group_cost(group, prices)
+            if cost is not None and group["calls"]:
                 page_usd = cost / group["calls"]
-            else:
-                reading_usd = cost / group["calls"]
+        if chat_paid:
+            # Priced by tokens at today's reading models, not by what earlier reads cost: those may have run on
+            # another model (a free one, or the chat model before STRUCTURE_MODEL was set).
+            tokens = {p: (t[1] / t[0], t[2] / t[0]) for p, t in reads.items() if t[0] and t[1]}
+            reading = _reading_usd(tokens, prices)
+            if reading is not None:
+                reading_usd = reading
     except Exception:  # the estimate must still answer without history
         log.exception("could not measure check costs from the traces; using the ESTIMATE_* settings")
     units = UnitCosts(True, check_usd, reading_usd, page_usd, seconds, measured)
@@ -250,26 +288,40 @@ async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> Un
     return units
 
 
+def _broken_pdf(path: Path) -> bool:
+    """A PDF whose text layer is broken, which the check sends to OCR like a scan (app.ai.structure)."""
+    if path.suffix.lower() != ".pdf" or not ocr.enabled():
+        return False
+    from app.ai.markdown import looks_broken, to_markdown
+
+    try:
+        return looks_broken(to_markdown(path))
+    except ExtractionError:
+        return False
+
+
 def _inspect(path: Path) -> tuple[str, int | None, str | None]:
     """(kind, pages, reason) of a file on disk, the way the check itself will find it."""
     try:
         extract(path)
-        return "text", None, None
+        if not _broken_pdf(path):
+            return "text", None, None
     except NoTextError:
         if path.suffix.lower() != ".pdf":
             return "unreadable", None, "The file is empty"
-        import pypdfium2 as pdfium
-
-        try:
-            document = pdfium.PdfDocument(str(path))
-        except pdfium.PdfiumError:
-            return "unreadable", None, "The file is damaged and does not open"
-        try:
-            return "scan", len(document), None
-        finally:
-            document.close()
     except ExtractionError:
         return "unreadable", None, "The file is damaged and does not open"
+    # A scan, or a PDF with a broken text layer: the OCR model reads both page by page.
+    import pypdfium2 as pdfium
+
+    try:
+        document = pdfium.PdfDocument(str(path))
+    except pdfium.PdfiumError:
+        return "unreadable", None, "The file is damaged and does not open"
+    try:
+        return "scan", len(document), None
+    finally:
+        document.close()
 
 
 async def _probe(version: SyllabusVersion) -> FileProbe | None:
