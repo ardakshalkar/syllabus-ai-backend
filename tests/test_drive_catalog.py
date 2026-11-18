@@ -12,6 +12,7 @@ from app.enums import AiStatus, ApprovalStage, RunStatus, VersionSource
 from app.models import AssessmentRun, Course, Syllabus, SyllabusVersion, UploadFolder
 from app.services import checks, drive_catalog
 from seed.samples import sample_syllabus
+from tests.conftest import create_syllabus, upload
 
 
 def _school_folder() -> str:
@@ -271,3 +272,39 @@ async def test_delete_folder_removes_folder_and_its_drive_syllabi(ref, client_fo
     async with pg.session_scope() as session:
         assert (await session.get(UploadFolder, folder_id)) is None
 
+
+
+async def test_delete_folder_closes_a_check_left_with_no_files(ref, client_for):
+    """Its items went with the deleted syllabi; it sat "Running" at 0 of 0 files and never finished."""
+    from app.auth.rbac import Principal
+    from app.enums import CheckKind, SessionScope, SessionStatus
+    from app.models import CheckSession
+    from app.services import sessions
+
+    folder_id = await _link(ref, _school_folder())
+    await drive_catalog.sync_folder(folder_id)
+    principal = Principal.of(ref["users"]["admin.digital"])
+    common = dict(semester="Fall 2026", checks=list(CheckKind), scheduled_at=None,
+                  notify_provost=False, notify_school=False)
+    async with pg.session_scope() as session:
+        of_folder, runs = await sessions.create(
+            session, principal, name="Folder", scope_type=SessionScope.folder, scope_ref=folder_id, **common
+        )
+        assert len(runs) == 2
+    # A professor's own upload: removing the folder only detaches it, so a check of it keeps an item.
+    lead = client_for(ref["users"]["shalkar"])
+    own = await create_syllabus(lead, ref["courses"]["ai"].id)
+    await upload(lead, own["id"], sample_syllabus("own", with_issues=False))
+    async with pg.session_scope() as session:
+        of_school, runs = await sessions.create(
+            session, principal, name="School", scope_type=SessionScope.school,
+            scope_ref=ref["schools"]["digital"].id, **common
+        )
+        assert len(runs) == 3
+
+    res = await client_for(ref["users"]["admin.digital"]).delete(f"/folders/{folder_id}")
+    assert res.status_code == 204
+    async with pg.session_scope() as session:
+        assert (await session.get(CheckSession, of_folder.id)).status == SessionStatus.cancelled
+        # The School check still waits on the syllabus uploaded in the app.
+        assert (await session.get(CheckSession, of_school.id)).status == SessionStatus.running
