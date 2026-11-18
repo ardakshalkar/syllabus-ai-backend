@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # unless set to true.
     llm_thinking: bool = False
     llm_base_url: str = "http://localhost:8000/v1"
+    # Whether each use of the chat server costs money, for the cost estimate (app/services/ai_servers.py).
+    # auto: paid for OpenRouter, Gemini, OpenAI and other known services and for unknown internet addresses,
+    # free for this machine and the local network. free / paid: say so outright (the university's own server
+    # on a public address; a paid service behind a local proxy).
+    llm_billing: Literal["auto", "free", "paid"] = "auto"
     llm_api_key: str = "EMPTY"
     llm_model: str = "Qwen/Qwen2.5-32B-Instruct"
     llm_model_version: str = "vllm-qwen2.5-32b"

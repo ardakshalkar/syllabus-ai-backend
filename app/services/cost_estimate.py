@@ -13,7 +13,8 @@ A file is opened once to learn which it is (FileProbe in Mongo); versions are im
 
 The prices are measured, not guessed: the tokens the last 30 days of checks used per syllabus (LlmTrace), at
 OpenRouter's published price of each model, or at what OpenRouter reported charging when the trace has it. With
-too little history, the ESTIMATE_* settings stand in. Models on the university's own server cost nothing per use.
+too little history, the ESTIMATE_* settings stand in. Models on the university's own server cost nothing per use;
+which server is which is worked out in services.ai_servers.
 
 Checking is priced for the check mode the administrator chose (services.check_mode), from the runs of check
 sessions that ran in that mode; a mode with too little history is priced from its model's list price
@@ -25,7 +26,7 @@ import logging
 import math
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,7 @@ from app.config import get_settings
 from app.documents import ExtractedDocument, FileProbe, LlmTrace
 from app.enums import SessionStatus
 from app.models import AssessmentRun, CheckSession, Course, SessionItem, Syllabus, SyllabusVersion
-from app.services import check_mode
+from app.services import ai_servers, check_mode
 from app.services.check_mode import CheckMode
 from app.storage import files
 
@@ -72,11 +73,20 @@ _units: dict[CheckMode, tuple[float, UnitCosts]] = {}
 _prices: tuple[float, dict[str, tuple[float, float]]] | None = None
 
 
-def billed() -> bool:
-    s = get_settings()
-    if s.llm_provider == "fake":
-        return False
-    return s.llm_provider == "openrouter" or "openrouter.ai" in s.llm_base_url
+async def servers(mode: CheckMode) -> list[ai_servers.AiServer]:
+    """The servers a check in `mode` talks to: the chat server, and the decision service in the standard mode."""
+    chat = await ai_servers.chat_server()
+    if mode.mode == check_mode.SINGLE and mode.model and chat.kind != "test":
+        chat = replace(chat, model=mode.model)
+    found = [chat]
+    if mode.mode != check_mode.SINGLE and (decisions := await ai_servers.decision_server()):
+        found.append(decisions)
+    return found
+
+
+async def billed(mode: CheckMode | None = None) -> bool:
+    """Whether a check in `mode` (by default the standard one) costs money per use on any of its servers."""
+    return any(server.billed for server in await servers(mode or CheckMode()))
 
 
 async def _openrouter_prices() -> dict[str, tuple[float, float]]:
@@ -107,7 +117,7 @@ def _group_cost(group: dict[str, Any], prices: dict[str, tuple[float, float]]) -
     """Total cost of a group of traces: what OpenRouter reported where it did, else tokens at the list price."""
     if group["costed"]:
         return group["cost"] / group["costed"] * group["calls"]
-    price = prices.get(group["_id"]["model"])
+    price = ai_servers.price_of(group["_id"]["model"], prices)
     if price is None:
         return None
     return group["tokens_in"] * price[0] + group["tokens_out"] * price[1]
@@ -170,10 +180,13 @@ async def _runs_in_mode(session: AsyncSession, mode: CheckMode, since: datetime)
 
 def _listed_check_usd(mode: CheckMode, prices: dict[str, tuple[float, float]]) -> float | None:
     """A one-request check at its model's list price, before there is history for it."""
-    if mode.mode != check_mode.SINGLE or not mode.model or mode.model not in prices:
+    if mode.mode != check_mode.SINGLE or not mode.model:
+        return None
+    price = ai_servers.price_of(mode.model, prices)
+    if price is None:
         return None
     s = get_settings()
-    price_in, price_out = prices[mode.model]
+    price_in, price_out = price
     return s.estimate_single_tokens_in * price_in + s.estimate_single_tokens_out * price_out
 
 
@@ -182,8 +195,11 @@ async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> Un
     and one scanned page cost lately; kept for an hour."""
     if mode is None:
         mode = await check_mode.current(session)
-    if not billed():
+    found = await servers(mode)
+    if not any(server.billed for server in found):
         return UnitCosts(False, 0.0, 0.0, 0.0, await _seconds_per_file(session))
+    # The chat server may be the university's own while the decision service is paid: then only decisions cost.
+    chat_paid = found[0].billed
     cached = _units.get(mode)
     if cached and time.monotonic() - cached[0] < 3600:
         return cached[1]
@@ -192,6 +208,9 @@ async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> Un
     prices = await _openrouter_prices()
     since = datetime.now(UTC) - timedelta(days=HISTORY_DAYS)
     check_usd, reading_usd, page_usd = s.estimate_check_usd, s.estimate_reading_usd, s.estimate_ocr_page_usd
+    if not chat_paid:
+        check_usd = s.estimate_decision_usd if len(found) > 1 else 0.0
+        reading_usd = page_usd = 0.0
     listed = _listed_check_usd(mode, prices)
     if listed is not None:
         check_usd = listed
@@ -204,16 +223,19 @@ async def unit_costs(session: AsyncSession, mode: CheckMode | None = None) -> Un
             measured = True
             total = 0.0
             for group in await _traces({**per_run, "purpose": {"$nin": ["ocr", "structure"]}}):
+                decision = group["_id"]["model"] == s.decision_model
+                if not chat_paid and not decision:
+                    continue
                 cost = _group_cost(group, prices)
-                if cost is None and group["_id"]["model"] == s.decision_model:
+                if cost is None and decision:
                     cost = group["calls"] * s.estimate_decision_usd
                 if cost is None:  # a model with no list price: the chat model's
-                    price = prices.get(s.llm_model, (0.2e-6, 0.4e-6))
+                    price = ai_servers.price_of(s.llm_model, prices) or (0.2e-6, 0.4e-6)
                     cost = group["tokens_in"] * price[0] + group["tokens_out"] * price[1]
                 total += cost
             check_usd = total / runs
         others = {"created_at": {"$gte": since}, "error": None, "purpose": {"$in": ["ocr", "structure"]}}
-        for group in await _traces(others):
+        for group in await _traces(others) if chat_paid else []:
             cost = _group_cost(group, prices)
             if cost is None or not group["calls"]:
                 continue
@@ -370,6 +392,7 @@ async def estimate(
         "not_looked_at": unknown,
         "ocr_enabled": ocr_on,
         "billed": units.billed,
+        "servers": [server.out() for server in await servers(mode)],
         "cost_usd": _money(known + expected_unknown),
         "cost_min_usd": _money(known),
         "cost_max_usd": _money(known + unknown * (plain + scan_extra)),
