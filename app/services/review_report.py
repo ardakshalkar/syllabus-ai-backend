@@ -8,6 +8,7 @@ the app stays the way to read it on screen.
 import asyncio
 import json
 import logging
+import re
 import smtplib
 import uuid
 from datetime import datetime
@@ -33,7 +34,9 @@ Lang = Literal["en", "ru", "kk"]
 
 # The report's words in Russian and Kazakh: its labels, the criterion and principle names, the School names.
 # Generated from the app's own translations (lib/i18n.ts, lib/i18n-kk.ts) so the PDF says what the screens say.
-_TEXTS: dict[str, dict[str, str]] = json.loads((Path(__file__).with_name("report_texts.json")).read_text("utf-8"))
+_TEXTS: dict[str, dict[str, str]] = json.loads(
+    (Path(__file__).with_name("report_texts.json")).read_text("utf-8")
+)
 
 # The five Schools by the short English name the screens show; the server stores some names in English and some
 # in Russian, depending on how each School was created. The same list as the app's lib/schools.ts.
@@ -57,12 +60,22 @@ def translator(lang: Lang):
     table = _TEXTS.get(lang, {})
     return lambda text: table.get(text, text) if text else text
 
+
 # Regular and bold faces, tried in order. DejaVu covers Cyrillic and the Kazakh letters; so does Arial.
 _FONTS = [
     ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
     ("arial.ttf", "arialbd.ttf"),
 ]
 _FONT_DIRS = ["/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "C:/Windows/Fonts"]
+# A backup for the characters DejaVu does not have, such as Chinese quoted from a Chinese-language syllabus:
+# (folder, regular, bold). WenQuanYi Micro Hei is the Debian package fonts-wqy-microhei; Microsoft YaHei ships
+# with Windows. Without one the report still renders, with those characters left blank.
+_CJK_FONTS = [
+    ("/usr/share/fonts/truetype/wqy", "wqy-microhei.ttc", "wqy-microhei.ttc"),
+    ("C:/Windows/Fonts", "msyh.ttc", "msyhbd.ttc"),
+]
+# Chinese, Japanese and Korean letters and their full-width punctuation: what DejaVu lacks and the backup has.
+_CJK = re.compile(r"[⺀-鿿가-힯豈-﫿＀-￯]")
 
 
 class NoFont(RuntimeError):
@@ -91,7 +104,7 @@ def _short_school(name: str) -> str:
 
 
 def _semester(semester: str, tr) -> str:
-    """"Fall 2026" as "Осень 2026": the season translated, the year kept."""
+    """ "Fall 2026" as "Осень 2026": the season translated, the year kept."""
     season, _, year = semester.partition(" ")
     return f"{tr(season)} {year}".strip()
 
@@ -109,8 +122,23 @@ _SEVERITY_BAR = {"critical": _RED, "major": _AMBER, "minor": _GREY}
 _LH = 0.353 * 1.45
 
 
+def _cjk_fonts() -> tuple[Path, Path] | None:
+    configured = get_settings().report_font_dir
+    candidates = [(configured, r, b) for _, r, b in _CJK_FONTS] if configured else []
+    for folder, regular, bold in candidates + _CJK_FONTS:
+        r, b = Path(folder) / regular, Path(folder) / bold
+        if r.is_file():
+            return r, b if b.is_file() else r
+    return None
+
+
+def _has_cjk(report: dict) -> bool:
+    """Whether any text in the report needs the backup font: loading it is slow, so most reports skip it."""
+    return bool(_CJK.search(json.dumps(report.get("courses", []), ensure_ascii=False, default=str)))
+
+
 class _Pdf(FPDF):
-    def __init__(self, footer_text: str, lang: Lang = "en"):
+    def __init__(self, footer_text: str, lang: Lang = "en", backup_font: bool = False):
         super().__init__(format="A4")
         self.footer_text = footer_text
         self.lang = lang
@@ -118,6 +146,13 @@ class _Pdf(FPDF):
         regular, bold = _fonts()
         self.add_font("Body", "", str(regular))
         self.add_font("Body", "B", str(bold))
+        cjk = _cjk_fonts() if backup_font else None
+        if cjk:
+            self.add_font("Backup", "", str(cjk[0]))
+            self.add_font("Backup", "B", str(cjk[1]))
+            self.set_fallback_fonts(["Backup"])
+        elif backup_font:
+            log.warning("No CJK font for the PDF report: Chinese, Japanese or Korean text will be left blank")
         self.set_auto_page_break(auto=True, margin=18)
         self.set_margins(18, 18, 18)
 
@@ -134,8 +169,16 @@ class _Pdf(FPDF):
         self.cell(0, 6, self.footer_text)
         self.cell(0, 6, str(self.page_no()), align="R")
 
-    def text_block(self, text: str, size: float = 11, bold: bool = False, color=_INK, gap: float = 1.5,
-                   x: float | None = None, w: float = 0) -> None:
+    def text_block(
+        self,
+        text: str,
+        size: float = 11,
+        bold: bool = False,
+        color=_INK,
+        gap: float = 1.5,
+        x: float | None = None,
+        w: float = 0,
+    ) -> None:
         self.set_font("Body", "B" if bold else "", size)
         self.set_text_color(*color)
         if x is not None:
@@ -143,7 +186,9 @@ class _Pdf(FPDF):
         self.multi_cell(w, size * _LH, text, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(gap)
 
-    def height_of(self, text: str, size: float, w: float, bold: bool = False, markdown: bool = False) -> float:
+    def height_of(
+        self, text: str, size: float, w: float, bold: bool = False, markdown: bool = False
+    ) -> float:
         self.set_font("Body", "B" if bold else "", size)
         lines = self.multi_cell(w, size * _LH, text, dry_run=True, output="LINES", markdown=markdown)
         return len(lines) * size * _LH
@@ -175,7 +220,9 @@ class _Pdf(FPDF):
         self.cell(w, size * 0.5, text, align="C")
         return w
 
-    def bar(self, x: float, y: float, w: float, h: float, parts: list[tuple[float, tuple]], track=_LINE) -> None:
+    def bar(
+        self, x: float, y: float, w: float, h: float, parts: list[tuple[float, tuple]], track=_LINE
+    ) -> None:
         self.set_fill_color(*track)
         self.rect(x, y, w, h, style="F", round_corners=True, corner_radius=h / 2)
         total = sum(n for n, _ in parts) or 1
@@ -190,8 +237,11 @@ class _Pdf(FPDF):
 
 
 def _counts(c: dict) -> str:
-    parts = [f"{c['critical']} critical" if c["critical"] else "", f"{c['major']} major" if c["major"] else "",
-             f"{c['minor']} minor" if c["minor"] else ""]
+    parts = [
+        f"{c['critical']} critical" if c["critical"] else "",
+        f"{c['major']} major" if c["major"] else "",
+        f"{c['minor']} minor" if c["minor"] else "",
+    ]
     return " · ".join(p for p in parts if p) or "no findings"
 
 
@@ -232,10 +282,16 @@ def _summary(pdf: _Pdf, report: dict, scope: str) -> None:
     generated = report["generated_at"]
     when = generated.strftime("%d.%m.%Y, %H:%M") if isinstance(generated, datetime) else str(generated)
     semester = _semester(report["semester"], tr)
-    pdf.text_block(f"{tr('Narxoz University')} · {tr('Syllabus review')} · {semester}", 9, bold=True, color=_BRAND, gap=1)
+    pdf.text_block(
+        f"{tr('Narxoz University')} · {tr('Syllabus review')} · {semester}", 9, bold=True, color=_BRAND, gap=1
+    )
     pdf.text_block(scope, 18, bold=True, gap=1)
-    pdf.text_block(f"{t['found']} {tr('syllabi')} · {t['checked']} {tr('checked')} · {tr('generated')} {when}", 9,
-                   color=_MUTED, gap=6)
+    pdf.text_block(
+        f"{t['found']} {tr('syllabi')} · {t['checked']} {tr('checked')} · {tr('generated')} {when}",
+        9,
+        color=_MUTED,
+        gap=6,
+    )
 
     # Four tiles: the key numbers.
     no_result = t["cannot_check"] + t["not_checked"]
@@ -270,16 +326,34 @@ def _summary(pdf: _Pdf, report: dict, scope: str) -> None:
             pdf.cell(w - 8, 4, _one_line(pdf, foot, w - 8))
     pdf.set_y(y + tile_h + 4)
     if t["found"]:
-        pdf.bar(pdf.l_margin, pdf.get_y(), pdf.width, 2.5, [
-            (t["with_critical"], _RED), (t["major_only"], _AMBER), (t["minor_only"], _GREY), (t["clean"], _GREEN),
-            (no_result, _LIGHT)])
+        pdf.bar(
+            pdf.l_margin,
+            pdf.get_y(),
+            pdf.width,
+            2.5,
+            [
+                (t["with_critical"], _RED),
+                (t["major_only"], _AMBER),
+                (t["minor_only"], _GREY),
+                (t["clean"], _GREEN),
+                (no_result, _LIGHT),
+            ],
+        )
         pdf.ln(6)
 
     if not report.get("school_id") and len(report["schools"]) > 1:
         pdf.heading(tr("By School"), 12)
-        _table(pdf, [tr("School"), tr("Syllabi"), tr("With critical findings")], [0, 25, 50],
-               [[tr(_short_school(s["school_name"])), str(s["found"]), str(s["with_critical"])] for s in report["schools"]],
-               colors=[None, None, _RED_TEXT], text_col=0)
+        _table(
+            pdf,
+            [tr("School"), tr("Syllabi"), tr("With critical findings")],
+            [0, 25, 50],
+            [
+                [tr(_short_school(s["school_name"])), str(s["found"]), str(s["with_critical"])]
+                for s in report["schools"]
+            ],
+            colors=[None, None, _RED_TEXT],
+            text_col=0,
+        )
 
     issues = sorted(report["issues"], key=lambda i: (not i["critical"], -i["syllabi"]))[:10]
     if issues:
@@ -298,8 +372,13 @@ def _summary(pdf: _Pdf, report: dict, scope: str) -> None:
                 pdf.pill(name_x, end + 0.3, tr("critical"), _RED_SOFT, _RED_TEXT, 7.5)
                 end += 5
             bar_x = pdf.l_margin + pdf.width - 60
-            pdf.bar(bar_x, y + 1.6, 32, 2.4, [(i["percent"], _RED if i["critical"] else _AMBER),
-                                               (100 - i["percent"], _LINE)])
+            pdf.bar(
+                bar_x,
+                y + 1.6,
+                32,
+                2.4,
+                [(i["percent"], _RED if i["critical"] else _AMBER), (100 - i["percent"], _LINE)],
+            )
             pdf.set_xy(bar_x + 34, y)
             pdf.set_font("Body", "B", 9.5)
             pdf.set_text_color(*_INK)
@@ -316,13 +395,27 @@ def _summary(pdf: _Pdf, report: dict, scope: str) -> None:
     if courses:
         title = tr("Courses with critical findings" if report["include"] == "critical" else "Courses")
         pdf.heading(f"{title} · {len(courses)}", 12)
-        _table(pdf, ["#", tr("Course"), tr("Critical"), tr("Major"), tr("Minor")], [12, 0, 20, 18, 18],
-               [[str(n), c["course_name"], str(c["critical"] or ""), str(c["major"] or ""), str(c["minor"] or "")]
-                for n, c in enumerate(courses, 1)],
-               colors=[_MUTED, None, _RED_TEXT, _AMBER_TEXT, _MUTED])
+        _table(
+            pdf,
+            ["#", tr("Course"), tr("Critical"), tr("Major"), tr("Minor")],
+            [12, 0, 20, 18, 18],
+            [
+                [
+                    str(n),
+                    c["course_name"],
+                    str(c["critical"] or ""),
+                    str(c["major"] or ""),
+                    str(c["minor"] or ""),
+                ]
+                for n, c in enumerate(courses, 1)
+            ],
+            colors=[_MUTED, None, _RED_TEXT, _AMBER_TEXT, _MUTED],
+        )
 
     pdf.ln(5)
-    text = tr("Findings are suggestions from the AI check for the professor to review, not an approval decision.")
+    text = tr(
+        "Findings are suggestions from the AI check for the professor to review, not an approval decision."
+    )
     h = pdf.height_of(text, 9, pdf.width - 10) + 7
     pdf.room(h)
     pdf.set_fill_color(*_TILE)
@@ -331,8 +424,9 @@ def _summary(pdf: _Pdf, report: dict, scope: str) -> None:
     pdf.text_block(text, 9, color=_MUTED, x=pdf.l_margin + 5, w=pdf.width - 10, gap=4)
 
 
-def _table(pdf: _Pdf, head: list[str], widths: list[float], rows: list[list[str]], colors: list,
-           text_col: int = 1) -> None:
+def _table(
+    pdf: _Pdf, head: list[str], widths: list[float], rows: list[list[str]], colors: list, text_col: int = 1
+) -> None:
     """A plain table: a header, then rows with a hairline between them and every other row shaded.
     A width of 0 takes what the others leave; numbers sit to the right."""
     rest = pdf.width - sum(widths)
@@ -404,12 +498,22 @@ def _course(pdf: _Pdf, c: dict) -> None:
     pdf.add_page()
     pdf.text_block(c["course_name"], _TITLE, bold=True, gap=1)
     school = _short_school(c["school_name"])
-    program = c["program_name"] if c["program_name"] and c["program_name"] not in (c["school_name"], school) else None
+    program = (
+        c["program_name"]
+        if c["program_name"] and c["program_name"] not in (c["school_name"], school)
+        else None
+    )
     language = tr(_LANGUAGE_NAMES.get(c["language"], c["language"])) if c["language"] else None
-    meta = " · ".join(x for x in [c["professor_name"] or tr("No professor matched"), language, tr(school), program] if x)
+    meta = " · ".join(
+        x for x in [c["professor_name"] or tr("No professor matched"), language, tr(school), program] if x
+    )
     pdf.text_block(meta, _META, color=_MUTED, gap=1.5)
     x, y = pdf.l_margin, pdf.get_y()
-    for sev, fill, color in (("critical", _RED_SOFT, _RED_TEXT), ("major", _AMBER_SOFT, _AMBER_TEXT), ("minor", _TILE, _MUTED)):
+    for sev, fill, color in (
+        ("critical", _RED_SOFT, _RED_TEXT),
+        ("major", _AMBER_SOFT, _AMBER_TEXT),
+        ("minor", _TILE, _MUTED),
+    ):
         if c[sev]:
             x += pdf.pill(x, y, f"{c[sev]} {tr(sev)}", fill, color, _SMALL) + 2
     pdf.set_y(y + 6)
@@ -484,7 +588,9 @@ def _course(pdf: _Pdf, c: dict) -> None:
             pdf.set_xy(left + w + 2, top)
             pdf.set_font("Body", "B", _NAME)
             pdf.set_text_color(*_INK)
-            pdf.multi_cell(inner - w - 2, _NAME * _LH, tr(f["name"]), align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(
+                inner - w - 2, _NAME * _LH, tr(f["name"]), align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT
+            )
             pdf.ln(0.8)
             if why:
                 pdf.text_block(why, _BODY, color=(60, 60, 60), x=left, w=inner, gap=0.8)
@@ -496,8 +602,15 @@ def _course(pdf: _Pdf, c: dict) -> None:
                 pdf.set_xy(left + 2.5, fy + 1.2)
                 pdf.set_text_color(*_FIX_TEXT)
                 pdf.set_font("Body", "", _BODY)
-                pdf.multi_cell(inner - 5, _BODY * _LH, f"{fix_label} {fix}", align="L", markdown=True,
-                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.multi_cell(
+                    inner - 5,
+                    _BODY * _LH,
+                    f"{fix_label} {fix}",
+                    align="L",
+                    markdown=True,
+                    new_x=XPos.LMARGIN,
+                    new_y=YPos.NEXT,
+                )
                 pdf.set_y(fy + fh)
             pdf.set_fill_color(*_RED)
             pdf.rect(pdf.l_margin, top, 1.2, pdf.get_y() - top, style="F")
@@ -516,7 +629,13 @@ def _course(pdf: _Pdf, c: dict) -> None:
             pdf.cell(10, row_h, cid)
             pdf.set_font("Body", "", _ROW)
             pdf.set_text_color(*(_INK if cid else _MUTED))
-            pdf.cell(pdf.width - 10, row_h, _one_line(pdf, line, pdf.width - 11), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.cell(
+                pdf.width - 10,
+                row_h,
+                _one_line(pdf, line, pdf.width - 11),
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
 
     if minor:
         section(f"{tr('Minor')} · {len(minor)}", _MUTED, _GREY)
@@ -529,7 +648,11 @@ def render_pdf(report: dict, lang: Lang = "en") -> bytes:
     tr = translator(lang)
     scope = tr(_short_school(report["school_name"]) if report.get("school_name") else "Whole university")
     semester = _semester(report["semester"], tr)
-    pdf = _Pdf(f"{tr('Narxoz University')} · {tr('Syllabus review')} · {semester} · {scope}", lang)
+    pdf = _Pdf(
+        f"{tr('Narxoz University')} · {tr('Syllabus review')} · {semester} · {scope}",
+        lang,
+        backup_font=_has_cjk(report),
+    )
     pdf.add_page()
     _summary(pdf, report, scope)
     for c in report["courses"]:
@@ -552,7 +675,9 @@ async def build(
     include: Include,
     lang: Lang = "en",
 ) -> tuple[dict, bytes, str]:
-    report = await analysis.report(session, principal, semester=semester, school_id=school_id, include=include)
+    report = await analysis.report(
+        session, principal, semester=semester, school_id=school_id, include=include
+    )
     pdf = await asyncio.to_thread(render_pdf, report, lang)
     return report, pdf, filename(report)
 
@@ -562,9 +687,9 @@ async def _recipients(session: AsyncSession) -> list[str]:
     if configured:
         return configured
     rows = await session.scalars(
-        sa.select(User.email).join(RoleAssignment, RoleAssignment.user_id == User.id).where(
-            RoleAssignment.role == Role.provost, User.is_active.is_(True)
-        )
+        sa.select(User.email)
+        .join(RoleAssignment, RoleAssignment.user_id == User.id)
+        .where(RoleAssignment.role == Role.provost, User.is_active.is_(True))
     )
     return sorted(set(rows))
 
@@ -612,13 +737,25 @@ async def send(
         outbox = Path("var/outbox")
         await asyncio.to_thread(outbox.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread((outbox / name).write_bytes, pdf)
-        log.info("EMAIL to=%s subject=%s attachment=%s (%d bytes, kept in %s)\n%s",
-                 ", ".join(to), subject, name, len(pdf), outbox / name, body)
+        log.info(
+            "EMAIL to=%s subject=%s attachment=%s (%d bytes, kept in %s)\n%s",
+            ", ".join(to),
+            subject,
+            name,
+            len(pdf),
+            outbox / name,
+            body,
+        )
     else:
         await asyncio.to_thread(_send_smtp, to, subject, body, pdf, name)
     row = ReviewReport(
-        semester=semester, school_id=school_id, include=include, courses=len(report["courses"]),
-        recipients=to, filename=name, sent_by=principal.id,
+        semester=semester,
+        school_id=school_id,
+        include=include,
+        courses=len(report["courses"]),
+        recipients=to,
+        filename=name,
+        sent_by=principal.id,
     )
     session.add(row)
     await session.flush()
@@ -637,12 +774,21 @@ async def sent(session: AsyncSession, principal: Principal, *, semester: str) ->
     if not principal.university_wide:
         # A School administrator's Schools, and the Schools a Head of Program's programs belong to.
         heads = sa.select(Program.school_id).where(Program.id.in_(principal.program_ids))
-        query = query.where(sa.or_(ReviewReport.school_id.in_(principal.school_ids), ReviewReport.school_id.in_(heads)))
+        query = query.where(
+            sa.or_(ReviewReport.school_id.in_(principal.school_ids), ReviewReport.school_id.in_(heads))
+        )
     return [
         {
-            "id": r.id, "semester": r.semester, "school_id": r.school_id, "school_name": school,
-            "include": r.include, "courses": r.courses, "recipients": r.recipients, "filename": r.filename,
-            "sent_by": who, "sent_at": r.created_at,
+            "id": r.id,
+            "semester": r.semester,
+            "school_id": r.school_id,
+            "school_name": school,
+            "include": r.include,
+            "courses": r.courses,
+            "recipients": r.recipients,
+            "filename": r.filename,
+            "sent_by": who,
+            "sent_at": r.created_at,
         }
         for r, who, school in (await session.execute(query)).all()
     ]
