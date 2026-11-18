@@ -56,7 +56,7 @@ from app.schemas.catalog import (
     SchoolOut,
 )
 from app.services import drive_admin, drive_catalog
-from app.services.sessions import ensure_can_manage
+from app.services.sessions import ensure_can_manage, settle_open_sessions
 from app.storage import drive, drive_config
 from app.storage.drive import GONE_HINT, explain_folder_error, folder_exists, share_hint
 
@@ -444,6 +444,9 @@ async def delete_folder(folder_id: uuid.UUID, principal: CurrentUser, session: D
                 ~sa.exists().where(Syllabus.course_id == Course.id),
             )
         )
+        await session.flush()
+        # A check of this folder, or of a School still waiting on these files, lost its items with them.
+        await settle_open_sessions(session)
     await session.delete(folder)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

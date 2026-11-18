@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # unless set to true.
     llm_thinking: bool = False
     llm_base_url: str = "http://localhost:8000/v1"
+    # Whether each use of the chat server costs money, for the cost estimate (app/services/ai_servers.py).
+    # auto: paid for OpenRouter, Gemini, OpenAI and other known services and for unknown internet addresses,
+    # free for this machine and the local network. free / paid: say so outright (the university's own server
+    # on a public address; a paid service behind a local proxy).
+    llm_billing: Literal["auto", "free", "paid"] = "auto"
     llm_api_key: str = "EMPTY"
     llm_model: str = "Qwen/Qwen2.5-32B-Instruct"
     llm_model_version: str = "vllm-qwen2.5-32b"
@@ -112,11 +117,23 @@ class Settings(BaseSettings):
     # cites a line by its number; the quote is then taken from that line, so it is always in the document.
     # The lines are sorted into categories once per syllabus version (app.ai.blocks) and kept.
     explain_blocks: bool = True
+    # The lines are numbered in code, with the category of their template label (or of the line before). On,
+    # the chat model also sorts the unlabelled lines: one more full read of the syllabus per version, which on
+    # Qwen 4 Max cost $0.022 a syllabus (Law School, Nov 2026) for a hint the checks hardly need.
+    blocks_sort_by_model: bool = False
     # After a check, its explanations and recommendations are translated from LLM_OUTPUT_LANGUAGE into the
     # app's other languages (English, Russian, Kazakh). TRANSLATION_MODEL names a model on the same server
     # for that (e.g. a Gemini model on OpenRouter, stronger in Kazakh); empty: the chat model translates.
     translation_model: str = ""
+    # The model that reads a syllabus's structure (outcomes, weeks, assessment; app.ai.structure), on the same
+    # server: copying text out of the document needs no strong model (e.g. google/gemma-4-31b-it).
+    # Empty: the chat model reads it.
+    structure_model: str = ""
     translate_results: bool = True
+    # Longest answer for one translation request (12 findings into two languages). Answers in 712 requests up to
+    # Nov 2026 were under 3,300 tokens (largest 4,355); without a cap two looped to the model's 131,072, taking
+    # 9 minutes and $0.05 each. A cut-off answer is not retried: at temperature 0 it would loop again.
+    translation_max_output_tokens: int = 8192
     # OpenRouter's key. LLM_PROVIDER=openrouter uses it when LLM_API_KEY is not set, and the decision model
     # always does, so one key in .env serves both.
     openrouter_api_key: str = ""

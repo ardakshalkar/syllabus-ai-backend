@@ -125,3 +125,51 @@ class AdminStatsOut(Schema):
     runs_by_status: dict[str, int]
     sessions_by_status: dict[str, int]
     recent_failed_runs: list[FailedRunOut]
+
+
+class TraceRowOut(Schema):
+    """One request to an AI model (the Mongo collection llm_traces), without its prompt and answer."""
+
+    id: str
+    created_at: datetime
+    purpose: str = Field(
+        description="what the request was for: criteria, explain, translate, ocr, structure, ..."
+    )
+    model: str
+    provider: str | None = Field(description="which host answered (OpenRouter), when it says")
+    run_id: uuid.UUID | None
+    syllabus_id: uuid.UUID | None = Field(description="the syllabus of the run, when the run is known")
+    course: str | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    cached_tokens: int | None
+    cost_usd: float | None
+    duration_ms: int
+    queued_ms: int | None
+    error: str | None
+
+
+class TraceSummaryOut(Schema):
+    """Totals over every request the filters match, not only the page shown."""
+
+    calls: int
+    errors: int
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: float
+    duration_ms: int
+
+
+class TracesOut(Schema):
+    items: list[TraceRowOut]
+    total: int
+    limit: int
+    offset: int
+    summary: TraceSummaryOut
+    purposes: list[str] = Field(description="every purpose in the collection, for the filter")
+    models: list[str] = Field(description="every model in the collection, for the filter")
+
+
+class TraceDetailOut(TraceRowOut):
+    messages: list[dict] = Field(description="what was sent: [{role, content}]")
+    response: str | None = Field(description="the answer as it came back")

@@ -169,3 +169,86 @@ def test_long_syllabus_is_cut_to_fit_the_ollama_context(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "vllm")
     get_settings.cache_clear()
     assert criteria.max_document_chars() == criteria.MAX_DOCUMENT_CHARS
+
+
+# The translation request's output cap: a model stuck repeating itself stops there, and is not asked again.
+
+
+def _counting_provider(monkeypatch, finish_reason: str, **env: str) -> tuple[list[dict], dict]:
+    from app.config import get_settings
+
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm.test/v1")
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    get_settings.cache_clear()
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        message = {"role": "assistant", "content": '{"ok": true}' if finish_reason == "stop" else '{"ok": tr'}
+        return httpx.Response(
+            200,
+            json={
+                "id": "x",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "m",
+                "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 8192, "total_tokens": 8202},
+            },
+        )
+
+    return bodies, {"http_client": httpx.AsyncClient(transport=httpx.MockTransport(handler))}
+
+
+async def test_translation_requests_carry_the_output_cap_and_checks_do_not(monkeypatch):
+    from app.ai.llm import get_llm, get_translation_llm
+
+    bodies, client = _counting_provider(
+        monkeypatch, "stop", LLM_PROVIDER="openrouter", TRANSLATION_MAX_OUTPUT_TOKENS="5000"
+    )
+    for llm in (get_translation_llm(), get_llm()):
+        llm.client = openai.AsyncOpenAI(base_url="http://llm.test/v1", api_key="k", **client)
+        assert await _ask(llm) == {"ok": True}
+    assert bodies[0]["max_tokens"] == 5000
+    assert "max_tokens" not in bodies[1]
+
+
+async def test_an_answer_cut_off_at_the_cap_fails_without_being_asked_again(monkeypatch):
+    from app.ai.llm import LLMError
+
+    bodies, client = _counting_provider(monkeypatch, "length", LLM_PROVIDER="openrouter", LLM_MAX_RETRIES="3")
+    monkeypatch.setattr("app.ai.llm.asyncio.sleep", _no_sleep)
+    llm = VllmProvider(max_output_tokens=8192)
+    llm.client = openai.AsyncOpenAI(base_url="http://llm.test/v1", api_key="k", **client)
+    with pytest.raises(LLMError, match="cut off at the cap of 8192"):
+        await _ask(llm)
+    assert len(bodies) == 1
+
+
+async def test_ollama_translation_is_capped_with_num_predict(monkeypatch):
+    from app.ai.llm import LLMError
+
+    cut = httpx.Response(
+        200,
+        json={"message": {"role": "assistant", "content": '{"ok": tr'}, "done_reason": "length", "eval_count": 300},
+    )
+    llm, bodies = _ollama(monkeypatch, [cut], LLM_MAX_RETRIES="3")
+    llm.max_output_tokens = 300
+    llm.options["num_predict"] = 300
+    monkeypatch.setattr("app.ai.llm.asyncio.sleep", _no_sleep)
+    with pytest.raises(LLMError, match="cut off"):
+        await _ask(llm)
+    assert bodies[0]["options"]["num_predict"] == 300
+    assert len(bodies) == 1
+
+
+def test_ollama_translation_client_gets_the_cap(monkeypatch):
+    from app.ai.llm import get_translation_llm
+    from app.config import get_settings
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("LLM_BASE_URL", "http://ollama.test:11434/v1")
+    monkeypatch.setenv("TRANSLATION_MAX_OUTPUT_TOKENS", "4096")
+    get_settings.cache_clear()
+    assert get_translation_llm().options["num_predict"] == 4096

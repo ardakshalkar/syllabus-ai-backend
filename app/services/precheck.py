@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import blocks, pipeline, structure
 from app.ai.extraction import ExtractionError
-from app.ai.llm import get_llm
+from app.ai.llm import get_llm, get_structure_llm
 from app.auth.rbac import Principal, ensure_course_lead
 from app.config import get_settings
 from app.db.pg import session_scope
@@ -91,7 +91,7 @@ async def run_job(job_id: str) -> bool:
         async with session_scope() as session:
             rubric = await load_rubric(session)
             how = check_mode.evaluator(await check_mode.current(session))
-        content, _ = await structure.read_syllabus(path, get_llm())
+        content, _ = await structure.read_syllabus(path, get_structure_llm())
         await blocks.ensure(content, get_llm())
         from app.services.checks import literature_in_library, program_context
 

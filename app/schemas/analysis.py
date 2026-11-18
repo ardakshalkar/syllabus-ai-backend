@@ -101,6 +101,7 @@ class SendReportIn(Schema):
     semester: str
     school_id: uuid.UUID | None = None
     include: Literal["summary", "critical", "all"] = "critical"
+    lang: Literal["en", "ru", "kk"] = Field("en", description="the language of the attached PDF")
 
 
 class SentReportOut(Schema):

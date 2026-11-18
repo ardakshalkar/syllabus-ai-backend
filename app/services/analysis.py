@@ -21,7 +21,7 @@ from app.services.rubric import LoadedRubric, load_rubric
 from app.services.syllabi import syllabus_rows_query
 
 # The most courses one report holds, as a guard against a runaway request rather than a working limit: a whole
-# university semester is ~150 courses and its PDF still renders in seconds. Beyond it the report is refused.
+# university semester is several hundred courses and its PDF still renders in seconds. Beyond it it is refused.
 REPORT_LIMIT = 1000
 # How many courses the page lists as needing attention most, within a School.
 ATTENTION = 10
@@ -180,7 +180,7 @@ async def report(
     if len(picked) > REPORT_LIMIT:
         raise ReportTooLarge(
             f"The report would hold {len(picked)} courses; it holds at most {REPORT_LIMIT}. "
-            + ("Pick one School." if school_id is None else "Pick only the courses with critical findings.")
+            "Pick one School, or only the courses with critical findings."
         )
     picked.sort(
         key=lambda r: (

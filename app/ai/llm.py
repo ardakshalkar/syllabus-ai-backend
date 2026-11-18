@@ -119,14 +119,25 @@ class _RetryableError(Exception):
     """A failed request worth retrying (server error, timeout, malformed reply)."""
 
 
+class _TruncatedError(Exception):
+    """The answer reached the output-token cap. Not retried: at temperature 0 the same request runs into the
+    cap again, typically a model repeating itself."""
+
+    def __init__(self, reply: _Reply, cap: int) -> None:
+        super().__init__(f"the answer was cut off at the cap of {cap} output tokens")
+        self.reply = reply
+
+
 class _ChatProvider:
     """Retries, the concurrency limit and tracing. Subclasses only send one request (`_send`)."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, max_output_tokens: int | None = None) -> None:
         s = get_settings()
         self.model = model or s.llm_model
         self.model_version = model or s.llm_model_version
         self.max_retries = s.llm_max_retries
+        # The longest answer a request may produce; None leaves it to the server (the model's own limit).
+        self.max_output_tokens = max_output_tokens
 
     async def _send(
         self,
@@ -160,6 +171,8 @@ class _ChatProvider:
                     error = None
                 except (_RetryableError, json.JSONDecodeError) as exc:
                     result, error, last_error = None, f"{type(exc).__name__}: {exc}", exc
+                except _TruncatedError as exc:
+                    reply, result, error, last_error = exc.reply, None, f"{type(exc).__name__}: {exc}", exc
                 duration = time.monotonic() - started
             if trace:
                 await _save_trace(
@@ -188,9 +201,11 @@ class _ChatProvider:
                 )
                 return result
             log.warning("LLM %s attempt %s/%s failed: %s", purpose, attempt, self.max_retries, error)
+            if isinstance(last_error, _TruncatedError):
+                break
             if attempt < self.max_retries:
                 await asyncio.sleep(min(2**attempt, 20))
-        raise LLMError(f"LLM call '{purpose}' failed after {self.max_retries} attempts: {last_error}")
+        raise LLMError(f"LLM call '{purpose}' failed after {attempt} attempt(s): {last_error}")
 
     async def complete_json(
         self,
@@ -234,8 +249,8 @@ def api_key() -> str:
 class VllmProvider(_ChatProvider):
     """OpenAI chat API: vLLM, llama-server and OpenRouter."""
 
-    def __init__(self, model: str | None = None) -> None:
-        super().__init__(model)
+    def __init__(self, model: str | None = None, max_output_tokens: int | None = None) -> None:
+        super().__init__(model, max_output_tokens)
         s = get_settings()
         self.extra_body: dict[str, Any] = {} if s.llm_thinking else dict(_NO_THINKING.get(s.llm_provider, {}))
         if s.llm_provider == "openrouter":
@@ -265,6 +280,8 @@ class VllmProvider(_ChatProvider):
         run_id: uuid.UUID | None = None,
     ) -> _Reply:
         kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": 0}
+        if self.max_output_tokens:
+            kwargs["max_tokens"] = self.max_output_tokens
         if schema is not None:
             kwargs["response_format"] = {
                 "type": "json_schema",
@@ -284,7 +301,7 @@ class VllmProvider(_ChatProvider):
                 raise refused from exc
             raise _RetryableError(f"{type(exc).__name__}: {exc}") from exc
         usage = completion.usage
-        return _Reply(
+        reply = _Reply(
             _strip_thinking(completion.choices[0].message.content or ""),
             getattr(usage, "prompt_tokens", None),
             getattr(usage, "completion_tokens", None),
@@ -292,6 +309,9 @@ class VllmProvider(_ChatProvider):
             cached_tokens(usage),
             (completion.model_extra or {}).get("provider"),
         )
+        if self.max_output_tokens and completion.choices[0].finish_reason == "length":
+            raise _TruncatedError(reply, self.max_output_tokens)
+        return reply
 
 
 def ollama_api_url(base_url: str) -> str:
@@ -304,14 +324,16 @@ class OllamaProvider(_ChatProvider):
     loads the model with the server's default context, which can be the model's maximum (262k for Qwen3):
     the KV cache then no longer fits on the GPU and every request runs several times slower."""
 
-    def __init__(self, model: str | None = None) -> None:
-        super().__init__(model)
+    def __init__(self, model: str | None = None, max_output_tokens: int | None = None) -> None:
+        super().__init__(model, max_output_tokens)
         s = get_settings()
         self.url = ollama_api_url(s.llm_base_url)
         self.think: bool | None = s.llm_thinking
         self.options: dict[str, Any] = {"temperature": 0}
         if s.llm_num_ctx:
             self.options["num_ctx"] = s.llm_num_ctx
+        if max_output_tokens:
+            self.options["num_predict"] = max_output_tokens
         self.keep_alive = s.llm_keep_alive
         key = s.llm_api_key
         headers = {"Authorization": f"Bearer {key}"} if key and key != "EMPTY" else {}
@@ -350,11 +372,14 @@ class OllamaProvider(_ChatProvider):
             raise _RetryableError(f"{type(exc).__name__}: {exc}") from exc
         if data.get("error"):
             raise _RetryableError(str(data["error"]))
-        return _Reply(
+        reply = _Reply(
             _strip_thinking((data.get("message") or {}).get("content") or ""),
             data.get("prompt_eval_count"),
             data.get("eval_count"),
         )
+        if self.max_output_tokens and data.get("done_reason") == "length":
+            raise _TruncatedError(reply, self.max_output_tokens)
+        return reply
 
 
 # One semaphore per event loop: Celery tasks run each job in a fresh loop.
@@ -387,6 +412,18 @@ def get_translation_llm() -> LLMProvider:
         from app.ai.fake import FakeProvider
 
         return FakeProvider()
+    cap = s.translation_max_output_tokens or None
     if s.llm_provider == "ollama":
-        return OllamaProvider(s.translation_model or None)
-    return VllmProvider(s.translation_model or None)
+        return OllamaProvider(s.translation_model or None, cap)
+    return VllmProvider(s.translation_model or None, cap)
+
+
+def get_structure_llm() -> LLMProvider:
+    """The model that reads a syllabus's structure (app.ai.structure): STRUCTURE_MODEL on the same server, or the
+    chat model."""
+    s = get_settings()
+    if s.llm_provider == "fake" or not s.structure_model:
+        return get_llm()
+    if s.llm_provider == "ollama":
+        return OllamaProvider(s.structure_model)
+    return VllmProvider(s.structure_model)

@@ -114,6 +114,7 @@ class LlmTrace(Document):
 
     class Settings:
         name = "llm_traces"
+        indexes = [IndexModel([("run_id", ASCENDING)]), IndexModel([("created_at", ASCENDING)])]
 
 
 class OcrPage(Document):
