@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     # for that (e.g. a Gemini model on OpenRouter, stronger in Kazakh); empty: the chat model translates.
     translation_model: str = ""
     translate_results: bool = True
+    # Longest answer for one translation request (12 findings into two languages). Answers in 712 requests up to
+    # Nov 2026 were under 3,300 tokens (largest 4,355); without a cap two looped to the model's 131,072, taking
+    # 9 minutes and $0.05 each. A cut-off answer is not retried: at temperature 0 it would loop again.
+    translation_max_output_tokens: int = 8192
     # OpenRouter's key. LLM_PROVIDER=openrouter uses it when LLM_API_KEY is not set, and the decision model
     # always does, so one key in .env serves both.
     openrouter_api_key: str = ""
