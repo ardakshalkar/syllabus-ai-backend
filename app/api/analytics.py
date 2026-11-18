@@ -1,5 +1,6 @@
 import uuid
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
@@ -107,15 +108,18 @@ async def analysis_report_pdf(
     session: DbSession,
     school_id: uuid.UUID | None = None,
     include: Literal["summary", "critical", "all"] = "critical",
+    lang: Literal["en", "ru", "kk"] = "en",
 ):
-    """The same report as a PDF file."""
+    """The same report as a PDF file, in English, Russian or Kazakh."""
     try:
         _, pdf, name = await review_report.build(
-            session, _reviewer(principal), semester=semester, school_id=school_id, include=include
+            session, _reviewer(principal), semester=semester, school_id=school_id, include=include, lang=lang
         )
     except (analysis.ReportTooLarge, review_report.NoFont) as exc:
         raise _report_errors(exc) from exc
-    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    # The name holds the School's name, often Cyrillic: a header is Latin-1, so it goes percent-encoded (RFC 5987).
+    disposition = f"attachment; filename*=UTF-8''{quote(name)}"
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": disposition})
 
 
 @router.post("/analysis/report/send", response_model=SentReportOut, status_code=status.HTTP_201_CREATED)
@@ -123,7 +127,12 @@ async def send_report(body: SendReportIn, principal: CurrentUser, session: DbSes
     """Generate the review report as a PDF and email it to the Provost Office."""
     try:
         await review_report.send(
-            session, _reviewer(principal), semester=body.semester, school_id=body.school_id, include=body.include
+            session,
+            _reviewer(principal),
+            semester=body.semester,
+            school_id=body.school_id,
+            include=body.include,
+            lang=body.lang,
         )
     except (analysis.ReportTooLarge, review_report.NoFont, review_report.NoRecipient) as exc:
         raise _report_errors(exc) from exc

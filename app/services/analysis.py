@@ -20,8 +20,9 @@ from app.services import analytics
 from app.services.rubric import LoadedRubric, load_rubric
 from app.services.syllabi import syllabus_rows_query
 
-# The most courses one report holds. Beyond it the report is refused with a way to narrow it.
-REPORT_LIMIT = 60
+# The most courses one report holds: enough for the largest School (Law, ~135 checked) with room to grow.
+# Beyond it the report is refused with a way to narrow it.
+REPORT_LIMIT = 300
 # How many courses the page lists as needing attention most, within a School.
 ATTENTION = 10
 
