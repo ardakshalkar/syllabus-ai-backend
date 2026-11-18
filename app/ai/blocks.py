@@ -231,6 +231,16 @@ def _schema(ids: list[int]) -> dict[str, Any]:
     }
 
 
+def number(raw_text: str) -> list[Block]:
+    """Every line of the text as a block, with no model: the category of its label where it has one, otherwise
+    of the line before it."""
+    blocks, previous = [], "course_info"
+    for text, category in pieces(raw_text):
+        previous = category or previous
+        blocks.append(Block(text=text, category=previous))
+    return blocks
+
+
 async def categorize(
     raw_text: str, llm: LLMProvider, *, run_id: uuid.UUID | None = None, trace: bool = True
 ) -> list[Block]:
@@ -267,10 +277,15 @@ async def categorize(
 
 
 async def ensure(content: ExtractedContent, llm: LLMProvider) -> bool:
-    """Give the content its blocks when EXPLAIN_BLOCKS is on and it has none yet; True when it got them."""
-    if content.blocks or not get_settings().explain_blocks or get_settings().llm_provider == "fake":
+    """Give the content its blocks when EXPLAIN_BLOCKS is on and it has none yet; True when it got them.
+    The lines are numbered in code; the model sorts the unlabelled ones only with BLOCKS_SORT_BY_MODEL, since
+    the category is only a hint to the reader and sorting cost as much as a whole check."""
+    s = get_settings()
+    if content.blocks or not s.explain_blocks or s.llm_provider == "fake":
         return False
-    content.blocks = await categorize(content.raw_text, llm)
+    content.blocks = (
+        await categorize(content.raw_text, llm) if s.blocks_sort_by_model else number(content.raw_text)
+    )
     return bool(content.blocks)
 
 

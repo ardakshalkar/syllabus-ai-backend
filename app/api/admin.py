@@ -5,7 +5,7 @@ import uuid
 from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 
 from app.auth.rbac import Principal
 from app.deps import DbSession, require_role
@@ -22,10 +22,12 @@ from app.schemas.admin import (
     ProgramPatch,
     SchoolPatch,
     StaffEmployeeOut,
+    TraceDetailOut,
+    TracesOut,
 )
 from app.schemas.catalog import CourseOut, ProgramOut, SchoolOut
 from app.schemas.work import CheckModeIn, CheckModeOut
-from app.services import admin, check_mode, cost_estimate, staff
+from app.services import admin, check_mode, cost_estimate, staff, traces
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 Admin = Annotated[Principal, require_role(Role.admin)]
@@ -122,7 +124,8 @@ async def list_employees(
 async def _check_mode_out(session: DbSession) -> CheckModeOut:
     return CheckModeOut(
         **await check_mode.describe(session),
-        billed=cost_estimate.billed(),
+        billed=await cost_estimate.billed(),
+        servers=[server.out() for server in await cost_estimate.servers(check_mode.CheckMode())],
         options=await cost_estimate.mode_options(session),
     )
 
@@ -143,6 +146,37 @@ async def set_check_mode(body: CheckModeIn, principal: Admin, session: DbSession
 @router.get("/stats", response_model=AdminStatsOut)
 async def stats(_: Admin, session: DbSession):
     return await admin.stats(session)
+
+
+@router.get("/traces", response_model=TracesOut, summary="Requests sent to AI models, newest first")
+async def list_traces(
+    _: Admin,
+    session: DbSession,
+    purpose: str | None = None,
+    model: str | None = None,
+    run_id: uuid.UUID | None = None,
+    errors: bool | None = Query(None, description="true: only failed requests, false: only answered ones"),
+    days: int | None = Query(None, ge=1, le=3650, description="only the last N days"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    return await traces.list_traces(
+        session,
+        purpose=purpose,
+        model=model,
+        run_id=run_id,
+        errors=errors,
+        days=days,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/traces/{trace_id}", response_model=TraceDetailOut, summary="One AI request with its prompt and answer"
+)
+async def get_trace(trace_id: str, _: Admin, session: DbSession):
+    return await traces.get_trace(session, trace_id)
 
 
 @router.get("/users", response_model=list[AdminUserOut])

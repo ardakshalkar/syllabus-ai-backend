@@ -88,6 +88,23 @@ class EstimateFile(Schema):
     reason: str | None = None
 
 
+class AiServerOut(Schema):
+    """One server the AI of a check runs on (app/services/ai_servers.py)."""
+
+    role: str = Field(
+        description="chat: checking, reading, scans, translating | decisions: the decision model"
+    )
+    kind: str = Field(
+        description="openrouter | paid_api | own_server | unknown (internet, not recognised) | test"
+    )
+    name: str = Field(description='e.g. "OpenRouter", "Google Gemini API", "OpenAI (ChatGPT)", "Ollama"')
+    host: str = Field(description='host and port of its address, e.g. "192.168.13.79:11434"')
+    address: str | None = Field(description="the IP address the host resolves to, when found")
+    network: str = Field(description="this_machine | local_network | internet | unknown")
+    billed: bool = Field(description="each use costs money")
+    model: str | None
+
+
 class EstimateOut(Schema):
     """What a check would read and roughly what it would cost, in words a School administrator can follow."""
 
@@ -102,6 +119,7 @@ class EstimateOut(Schema):
     billed: bool = Field(
         description="false when the models run on the university's own server (no per-use cost)"
     )
+    servers: list[AiServerOut] = Field(description="where the AI of this check runs")
     cost_usd: float = Field(description="expected cost")
     cost_min_usd: float
     cost_max_usd: float
@@ -315,6 +333,7 @@ class CheckModeOut(Schema):
     model: str | None
     label: str
     billed: bool
+    servers: list[AiServerOut] = Field(description="where the AI of the standard check runs")
     updated_at: datetime | None
     updated_by_name: str | None
     options: list[CheckModeOption]

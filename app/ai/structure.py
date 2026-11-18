@@ -38,8 +38,9 @@ async def read_syllabus(path: Path, llm: LLMProvider) -> tuple[ExtractedContent,
     """The syllabus's content and which extractor produced it. A file that cannot be opened raises
     ExtractionError as before; if only the Markdown or the model fails, the line extraction is used.
 
-    A PDF with no text layer (a scan) is read by the OCR model when OCR_MODEL is set (app.ai.ocr); its
-    transcription then stands in for markitdown's Markdown. If OCR reads nothing either, NoTextError is raised."""
+    A PDF with no text layer (a scan), or with a broken one a scanner laid over the page, is read by the OCR
+    model when OCR_MODEL is set (app.ai.ocr); its transcription then stands in for markitdown's Markdown.
+    If OCR reads nothing either, NoTextError is raised."""
     markdown: str | None = None
     try:
         base = await asyncio.to_thread(extract, path)
@@ -52,6 +53,11 @@ async def read_syllabus(path: Path, llm: LLMProvider) -> tuple[ExtractedContent,
         base.read_by_ocr = True
     if wanted_extractor() != EXTRACTOR:
         return base, LINES
+    if markdown is None and path.suffix.lower() == ".pdf" and ocr.enabled():
+        markdown, by_ocr = await _pdf_markdown(path)
+        if by_ocr:
+            base = parse_lines(markdown_lines(markdown))
+            base.read_by_ocr = True
     try:
         if markdown is None:
             from app.ai.markdown import to_markdown
@@ -65,6 +71,24 @@ async def read_syllabus(path: Path, llm: LLMProvider) -> tuple[ExtractedContent,
         log.info("structure extraction dropped text not in the document: %s", report["dropped"])
     content.read_by_ocr = base.read_by_ocr
     return content, EXTRACTOR
+
+
+async def _pdf_markdown(path: Path) -> tuple[str | None, bool]:
+    """(Markdown, read by OCR) of a PDF with a text layer: markitdown's, or the OCR transcription when the layer
+    is broken (app.ai.markdown.looks_broken). (None, False) when markitdown fails; the caller tries it again."""
+    from app.ai.markdown import looks_broken, to_markdown
+
+    try:
+        layer = await asyncio.to_thread(to_markdown, path)
+    except Exception:
+        return None, False
+    if not looks_broken(layer):
+        return layer, False
+    log.info("%s has a broken text layer; reading it with OCR", path.name)
+    try:
+        return await ocr.read_pdf(path), True
+    except NoTextError:  # the OCR model read nothing: the broken layer is still better than no text
+        return layer, False
 
 
 def markdown_lines(markdown: str) -> list[tuple[str, bool]]:

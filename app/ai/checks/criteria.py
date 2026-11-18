@@ -40,15 +40,16 @@ For every criterion you are given, decide one status:
 - "Not compliant": it is missing or contradicted. {missing_rule}
 - "Cannot verify": {cannot_verify_rule}
 Rules:
-- "evidence" MUST be copied verbatim from the syllabus: one short passage, at most 200 characters. Never paraphrase.
-  When something is missing, quote the closest related passage (for example the outcome that is not assessed).
+{evidence_rule}
 - "explanation" says why the evidence leads to the status, in one short sentence.
 - "recommendation" is one concrete edit the professor can make, in one sentence. Leave it empty ("") when the status
   is "Compliant".
 - "confidence" is your confidence in the status between 0 and 1.
-- Write explanation and recommendation in {language}. Keep evidence in the syllabus's original language.
+- Write explanation and recommendation in {language}. Keep the quote in the syllabus's original language.
 - Judge only what is written. Do not assume content that is not in the document.
 - Be brief: the answer is read by software, not by people."""
+CHECK_EVIDENCE_RULE = """- "evidence" MUST be copied verbatim from the syllabus: one short passage, at most 200 characters. Never paraphrase.
+  When something is missing, quote the closest related passage (for example the outcome that is not assessed)."""
 
 
 # When a decision model has already given each criterion its status (app.ai.decisions), the chat model only
@@ -74,7 +75,8 @@ For every criterion write:
 
 
 def cites_blocks(content: ExtractedContent) -> bool:
-    """The explanation step cites numbered lines (EXPLAIN_BLOCKS) when the syllabus has been split into them."""
+    """The checking and explanation steps cite numbered lines (EXPLAIN_BLOCKS) when the syllabus has been split
+    into them."""
     return get_settings().explain_blocks and bool(content.blocks)
 
 
@@ -88,6 +90,17 @@ EXPLAIN_BLOCK_EVIDENCE = """- "quote": the words of the syllabus that support th
 _TAG = re.compile(r"^\s*\[\d+·[a-z_]+\]\s*")
 _EVIDENCE_RULE = """- "evidence": copied verbatim from the syllabus: one short passage, at most 200 characters. Never paraphrase.
   When something is missing, quote the closest related passage (for example the outcome that is not assessed)."""
+
+
+def system_prompt(numbered: bool) -> str:
+    """The checking step's instructions. With numbered lines the model names a line and copies words from it,
+    as in the explanation step, so its quote is taken from the document and never needs a second request."""
+    return SYSTEM_PROMPT.format(
+        language=get_settings().llm_output_language,
+        missing_rule=MISSING_RULE,
+        cannot_verify_rule=CANNOT_VERIFY_RULE,
+        evidence_rule=EXPLAIN_BLOCK_EVIDENCE if numbered else CHECK_EVIDENCE_RULE,
+    )
 
 
 def explain_system_prompt(numbered: bool) -> str:
@@ -150,7 +163,21 @@ def explain_schema(codes: list[str], numbered: bool = False) -> dict[str, Any]:
     }
 
 
-def response_schema(codes: list[str]) -> dict[str, Any]:
+def response_schema(codes: list[str], numbered: bool = False) -> dict[str, Any]:
+    if numbered:
+        schema = response_schema(codes)
+        item = schema["properties"]["results"]["items"]
+        props = dict(item["properties"])
+        del props["evidence"]
+        item["properties"] = {
+            "criterion_id": props.pop("criterion_id"),
+            "status": props.pop("status"),
+            "quote": {"type": "string"},
+            "line": {"type": "integer"},
+            **props,
+        }
+        item["required"] = list(item["properties"])
+        return schema
     return {
         "type": "object",
         "additionalProperties": False,
@@ -220,10 +247,12 @@ def build_user_prompt(
     report: TechnicalReport,
     context: dict[str, str],
     statuses: dict[str, ResultStatus] | None = None,
+    numbered: bool | None = None,
 ) -> str:
     """The syllabus and the structure findings come first and are the same for every principle, so the model
     server can reuse that part of the prompt (prefix cache) for the next principle instead of reading it again.
-    `statuses`: the status already decided for each criterion, which the model explains instead of deciding."""
+    `statuses`: the status already decided for each criterion, which the model explains instead of deciding.
+    `numbered`: show the syllabus as numbered lines (by default when explaining decided statuses)."""
     criteria = [
         {
             "criterion_id": s.code,
@@ -233,7 +262,9 @@ def build_user_prompt(
         }
         for s in specs
     ]
-    if statuses is not None and cites_blocks(content):
+    if numbered is None:
+        numbered = statuses is not None
+    if numbered and cites_blocks(content):
         numbered = blocks.render(content.blocks, max_document_chars())
         parts = [f"Syllabus, one numbered line each, [number·category] text:\n<<<\n{numbered}\n>>>"]
     else:
@@ -266,15 +297,12 @@ async def evaluate_principle(
     trace: bool = True,
 ) -> list[CriterionResultData]:
     codes = [s.code for s in specs]
+    numbered = cites_blocks(content)
     data = await llm.complete_json(
         purpose="criteria",
-        system=SYSTEM_PROMPT.format(
-            language=get_settings().llm_output_language,
-            missing_rule=MISSING_RULE,
-            cannot_verify_rule=CANNOT_VERIFY_RULE,
-        ),
-        user=build_user_prompt(specs, content, report, context),
-        schema=response_schema(codes),
+        system=system_prompt(numbered),
+        user=build_user_prompt(specs, content, report, context, numbered=numbered),
+        schema=response_schema(codes, numbered),
         meta={"criteria": specs, "content": content, "report": report, "context": context},
         run_id=run_id,
         trace=trace,
@@ -285,10 +313,14 @@ async def evaluate_principle(
         if code in codes and code not in by_code:
             status = ResultStatus(item["status"])
             recommendation = (item.get("recommendation") or "").strip()
+            evidence, block = (
+                quote_from_block(item, content) if numbered else ((item.get("evidence") or "").strip(), None)
+            )
             by_code[code] = CriterionResultData(
                 criterion_id=code,
                 status=status,
-                evidence=(item.get("evidence") or "").strip(),
+                evidence=evidence,
+                evidence_block=block,
                 explanation=(item.get("explanation") or "").strip(),
                 # The model leaves it empty for Compliant criteria, which saves tokens; the text is ours.
                 recommendation=recommendation or (NO_CHANGE if status == ResultStatus.compliant else ""),
@@ -345,7 +377,9 @@ async def explain_principle(
     out = []
     for code in codes:
         item = written.get(code, {})
-        evidence, block = quote_from_block(item, content) if numbered else ((item.get("evidence") or "").strip(), None)
+        evidence, block = (
+            quote_from_block(item, content) if numbered else ((item.get("evidence") or "").strip(), None)
+        )
         status = statuses[code]
         if not evidence and status != ResultStatus.cannot_verify:
             out.append(
