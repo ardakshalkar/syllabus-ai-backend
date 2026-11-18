@@ -334,6 +334,37 @@ async def on_run_finished(session: AsyncSession, run: AssessmentRun, *, ok: bool
         await _finish(session, cs)
 
 
+async def settle_open_sessions(session: AsyncSession) -> None:
+    """Close Running and Paused sessions left with nothing to wait for after their syllabi were deleted.
+
+    Removing a folder deletes its Drive syllabi, and their session items go with them (ON DELETE CASCADE). No
+    run of theirs finishes after that, so on_run_finished never closes the session: it sat "Running" at 0 of 0
+    files for good. One left with no items at all is cancelled; one whose other items are all finished is
+    completed, as its last run would have done.
+    """
+    open_sessions = (
+        await session.scalars(
+            sa.select(CheckSession)
+            .where(CheckSession.status.in_((SessionStatus.running, SessionStatus.paused)))
+            .with_for_update()
+        )
+    ).all()
+    for cs in open_sessions:
+        total, remaining = (
+            await session.execute(
+                sa.select(
+                    sa.func.count(),
+                    sa.func.count().filter(SessionItem.status.not_in(FINISHED)),
+                ).where(SessionItem.session_id == cs.id)
+            )
+        ).one()
+        if total == 0:
+            cs.status = SessionStatus.cancelled
+            cs.completed_at = _now()
+        elif remaining == 0:
+            await _finish(session, cs)
+
+
 async def _finish(session: AsyncSession, cs: CheckSession) -> None:
     cs.status = SessionStatus.completed
     cs.completed_at = _now()
