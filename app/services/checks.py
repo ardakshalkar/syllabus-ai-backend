@@ -1,12 +1,16 @@
+import asyncio
+import hashlib
 import logging
 import time
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.ai import alignment, blocks, pipeline, structure
 from app.ai.extraction import ExtractionError
@@ -44,7 +48,7 @@ from app.models import (
 )
 from app.services import check_mode, drive_catalog, program_links, run_live, run_progress, translations
 from app.services.notifications import notify
-from app.services.rubric import load_rubric
+from app.services.rubric import LoadedRubric, load_rubric
 from app.storage import files
 
 log = logging.getLogger(__name__)
@@ -62,6 +66,7 @@ async def create_run(
     checks: Iterable[CheckKind] | None = None,
     session_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    force: bool = False,
 ) -> AssessmentRun:
     rubric_id = await session.scalar(sa.select(RubricVersion.id).where(RubricVersion.is_active.is_(True)))
     if rubric_id is None:
@@ -74,6 +79,7 @@ async def create_run(
         status=RunStatus.queued,
         session_id=session_id,
         created_by=user_id,
+        force=force,
     )
     session.add(run)
     syllabus = await session.get(Syllabus, version.syllabus_id)
@@ -111,6 +117,8 @@ async def load_content(version: SyllabusVersion) -> ExtractedContent:
             await cached.save()
         return cached.content
     async with files.local_copy(version) as path:
+        if not version.sha256:  # the file is open anyway: remember what it is, for a later re-check
+            await remember_hash(version, await asyncio.to_thread(file_hash, path))
         content, extractor = await structure.read_syllabus(path, get_structure_llm())
     await blocks.ensure(content, get_llm())
     if cached:
@@ -123,6 +131,111 @@ async def load_content(version: SyllabusVersion) -> ExtractedContent:
             .values(language=content.language)
         )
     return content
+
+
+def file_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+async def remember_hash(version: SyllabusVersion, digest: str) -> None:
+    """Stores the hash of a version's file, learned when the file was opened. A version's file never changes,
+    so this is not an edit of the version, only something found out about it."""
+    async with session_scope() as session:
+        await session.execute(
+            sa.update(SyllabusVersion).where(SyllabusVersion.id == version.id).values(sha256=digest)
+        )
+    set_committed_value(version, "sha256", digest)  # without marking the caller's object changed
+
+
+async def content_hash(version: SyllabusVersion) -> str:
+    """The hash of the version's file: known for an upload, read once from Drive for a version read from it."""
+    if version.sha256:
+        return version.sha256
+    digest = hashlib.sha256(await files.read_version(version)).hexdigest()
+    await remember_hash(version, digest)
+    return digest
+
+
+async def reusable_run(
+    session: AsyncSession,
+    version: SyllabusVersion,
+    rubric_version_id: uuid.UUID,
+    checks: Iterable[CheckKind],
+    *,
+    read_file: bool = False,
+) -> AssessmentRun | None:
+    """A completed check whose result a new check of `version` can take instead of asking the AI again: of the
+    same file (this version, or another version of the syllabus whose file has the same bytes), against the same
+    rubric, covering at least these checks, and compared with the programs the course would be compared with
+    now (so a program set for the course since is graded). None when there is none.
+
+    A version read from Drive whose hash is not known yet has its file read for it only with `read_file` (the
+    check, which is about to read it anyway); the cost estimate does not wait for downloads."""
+    wanted = {c.value for c in checks}
+    rows = (
+        await session.execute(
+            sa.select(AssessmentRun, SyllabusVersion.sha256)
+            .join(SyllabusVersion, SyllabusVersion.id == AssessmentRun.version_id)
+            .where(
+                SyllabusVersion.syllabus_id == version.syllabus_id,
+                AssessmentRun.status == RunStatus.completed,
+                AssessmentRun.rubric_version_id == rubric_version_id,
+            )
+            .order_by(AssessmentRun.completed_at.desc())
+        )
+    ).all()
+    covering = [(run, digest) for run, digest in rows if wanted <= set(run.checks)]
+    same_file = [run for run, _ in covering if run.version_id == version.id]
+    if not same_file:
+        hashed = [(run, digest) for run, digest in covering if digest]
+        if not hashed:
+            return None
+        digest = version.sha256
+        if digest is None and read_file:
+            digest = await content_hash(version)
+        same_file = [run for run, d in hashed if d == digest]
+    if not same_file:
+        return None
+    syllabus = await session.get(Syllabus, version.syllabus_id)
+    course = await session.get(Course, syllabus.course_id) if syllabus else None
+    if course is None:
+        return None
+    found = await program_links.candidates(session, course)
+    basis = found.basis.value if found.basis else None
+    program_ids = sorted(str(p.id) for p in found.programs)
+    for run in same_file:
+        if run.program_basis == basis and sorted(run.program_ids or []) == program_ids:
+            return run
+    return None
+
+
+async def _take_result(
+    run_id: uuid.UUID, version: SyllabusVersion, source: AssessmentRun
+) -> EvaluationOutput | None:
+    """Copies the source check's result (and, for another version, its reading of the file) to this run."""
+    doc = await get_results(source.id)
+    if doc is None:
+        return None
+    if source.version_id != version.id:
+        read = await ExtractedDocument.find_one(ExtractedDocument.version_id == source.version_id)
+        if read and not await ExtractedDocument.find_one(ExtractedDocument.version_id == version.id):
+            await ExtractedDocument(
+                version_id=version.id, content=read.content, extractor=read.extractor
+            ).insert()
+    await AssessmentResultDoc.find(AssessmentResultDoc.run_id == run_id).delete()
+    await AssessmentResultDoc(
+        run_id=run_id, version_id=version.id, technical=doc.technical, results=doc.results
+    ).insert()
+    return EvaluationOutput(
+        technical=doc.technical,
+        results=doc.results,
+        model_version=source.model_version or "",
+        checker_version=source.checker_version or "",
+    )
 
 
 PASSPORT = "Educational Program Passport"
@@ -260,6 +373,8 @@ async def execute_run(run_id: uuid.UUID) -> None:
         rubric = await load_rubric(session, run.rubric_version_id)
         course_id = syllabus.course_id
         checks = frozenset(CheckKind(c) for c in run.checks)
+        force = run.force
+        rubric_version_id = run.rubric_version_id
         live = await run_live.claim(run_id, "Reading document")
 
     started = time.monotonic()
@@ -274,6 +389,8 @@ async def execute_run(run_id: uuid.UUID) -> None:
 
         try:
             version = await drive_catalog.follow_drive(run_id, version)
+            if not force and await _reuse(run_id, version, rubric_version_id, checks, rubric):
+                return
             content = await load_content(version)
             library_report = await literature_in_library(content) if CheckKind.library in checks else None
             programs = await program_context(course_id, content)
@@ -339,6 +456,33 @@ async def execute_run(run_id: uuid.UUID) -> None:
             await run_progress.record_pace(live.state)
         except Exception:  # only the next estimates suffer
             log.exception("could not record the pace of check run %s", run_id)
+
+
+async def _reuse(
+    run_id: uuid.UUID,
+    version: SyllabusVersion,
+    rubric_version_id: uuid.UUID,
+    checks: frozenset[CheckKind],
+    rubric: LoadedRubric,
+) -> bool:
+    """Completes the run with an earlier check's result when the file has not changed. False: ask the AI."""
+    async with session_scope() as session:
+        source = await reusable_run(session, version, rubric_version_id, checks, read_file=True)
+        if source is None:
+            return False
+        session.expunge(source)
+    output = await _take_result(run_id, version, source)
+    if output is None:
+        return False
+    await _complete(
+        run_id,
+        output,
+        rubric.criterion_ids,
+        {s.code for s in rubric.specs if s.critical},
+        reused_from=source,
+    )
+    log.info("check run %s took the result of run %s: the file had not changed", run_id, source.id)
+    return True
 
 
 async def _next_waiting_single_run(skip: set[uuid.UUID]) -> uuid.UUID | None:
@@ -448,7 +592,9 @@ async def _complete(
     critical: set[str],
     programs: ProgramContext | None = None,
     links: list[alignment.Link] | None = None,
+    reused_from: AssessmentRun | None = None,
 ) -> None:
+    """With `reused_from`, the result is that earlier check's: its programs and outcome links are copied too."""
     from app.services.sessions import on_run_finished
 
     issues = pipeline.count_issues(output.results)
@@ -487,6 +633,23 @@ async def _complete(
                 for link in links or []
                 if (link.program, link.outcome) in programs.outcome_ids
             )
+        if reused_from is not None:
+            run.reused_from_id = reused_from.id
+            run.program_basis = reused_from.program_basis
+            run.program_ids = reused_from.program_ids
+            earlier = await session.scalars(
+                sa.select(OutcomeLink).where(OutcomeLink.run_id == reused_from.id)
+            )
+            session.add_all(
+                OutcomeLink(
+                    run_id=run_id,
+                    program_outcome_id=link.program_outcome_id,
+                    course_outcome=link.course_outcome,
+                    course_outcome_text=link.course_outcome_text,
+                    reason=link.reason,
+                )
+                for link in earlier.all()
+            )
         run.status = RunStatus.completed
         run.completed_at = _now()
         run.model_version = output.model_version
@@ -504,7 +667,8 @@ async def _complete(
                     syllabus_id=syllabus.id,
                     kind="check",
                     version=version.version,
-                    comment=f"AI check completed: {issues} issue(s)",
+                    comment=f"AI check completed: {issues} issue(s)"
+                    + (" (the file had not changed: the earlier result was taken)" if reused_from else ""),
                 )
             )
             if syllabus.approval_stage == ApprovalStage.draft:

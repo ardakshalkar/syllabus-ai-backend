@@ -2,6 +2,8 @@
 
 The syllabi come from the same scope and filters as the check itself (sessions.scope_versions). Each file is
 one of:
+- unchanged: an earlier check of the same file against the same rubric is taken as it is (checks.reusable_run),
+  at no cost at all, unless the administrator asks the AI again (`force`);
 - already read: an earlier check extracted its text (ExtractedDocument), which is reused at no reading cost;
 - text: a Word file or a PDF with a text layer;
 - scan: a PDF without text, which the OCR model reads page by page first (app.ai.ocr);
@@ -10,7 +12,8 @@ one of:
   opening in the background, and the window asks again until there are none: a check cannot be started on
   files that were not counted. A file Drive would not hand over is counted as unreadable for that estimate.
 
-A file is opened once to learn which it is (FileProbe in Mongo); versions are immutable, so the answer is kept.
+A file is opened once to learn which it is (FileProbe in Mongo); versions are immutable, so the answer is kept,
+and so is the file's hash (which tells an unchanged file from a changed one).
 
 The prices are measured, not guessed: the tokens the last 30 days of checks used per syllabus (LlmTrace), at
 OpenRouter's published price of each model, or at what OpenRouter reported charging when the trace has it. With
@@ -41,9 +44,17 @@ from app.ai import ocr, structure
 from app.ai.extraction import ExtractionError, NoTextError, extract
 from app.config import get_settings
 from app.documents import ExtractedDocument, FileProbe, LlmTrace
-from app.enums import SessionStatus
-from app.models import AssessmentRun, CheckSession, Course, SessionItem, Syllabus, SyllabusVersion
-from app.services import ai_servers, check_mode
+from app.enums import CheckKind, SessionStatus
+from app.models import (
+    AssessmentRun,
+    CheckSession,
+    Course,
+    RubricVersion,
+    SessionItem,
+    Syllabus,
+    SyllabusVersion,
+)
+from app.services import ai_servers, check_mode, checks
 from app.services.check_mode import CheckMode
 from app.storage import files
 
@@ -341,6 +352,8 @@ async def _probe(version: SyllabusVersion) -> FileProbe:
         try:
             async with files.local_copy(version) as path:
                 kind, pages, reason = await asyncio.to_thread(_inspect, path)
+                if not version.sha256:
+                    await checks.remember_hash(version, await asyncio.to_thread(checks.file_hash, path))
         except Exception as exc:
             log.info("could not open %s for the estimate: %s", version.filename, exc)
             return FileProbe(version_id=version.id, kind="unreadable", reason=NOT_DOWNLOADED)  # type: ignore[arg-type]
@@ -461,9 +474,37 @@ def _money(value: float) -> float:
     return round(value, 4)
 
 
+async def _unchanged(session: AsyncSession, versions: list[SyllabusVersion]) -> set[uuid.UUID]:
+    """The versions whose check would take an earlier result (checks.reusable_run), as far as is known
+    without downloading: a Drive file not opened yet counts as changed."""
+    rubric_id = await session.scalar(sa.select(RubricVersion.id).where(RubricVersion.is_active.is_(True)))
+    if rubric_id is None:
+        return set()
+    checked = set(
+        await session.scalars(
+            sa.select(SyllabusVersion.syllabus_id)
+            .join(AssessmentRun, AssessmentRun.version_id == SyllabusVersion.id)
+            .where(
+                SyllabusVersion.syllabus_id.in_({v.syllabus_id for v in versions}),
+                AssessmentRun.rubric_version_id == rubric_id,
+            )
+        )
+    )
+    return {
+        v.id
+        for v in versions
+        if v.syllabus_id in checked and await checks.reusable_run(session, v, rubric_id, list(CheckKind))
+    }
+
+
 async def estimate(
-    session: AsyncSession, pairs: list[tuple[uuid.UUID, uuid.UUID]], budget_s: float = PROBE_BUDGET_S
+    session: AsyncSession,
+    pairs: list[tuple[uuid.UUID, uuid.UUID]],
+    budget_s: float = PROBE_BUDGET_S,
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
+    """Without `force`, files unchanged since their last check are free (see the module's docstring)."""
     s = get_settings()
     version_ids = [version_id for _, version_id in pairs]
     rows = (
@@ -475,14 +516,21 @@ async def estimate(
         )
     ).all()
     versions = {v.id: (v, course) for v, course in rows}
+    # Checked before against this rubric, unchanged: free. Decided before probing for what is known, and again
+    # after it for the Drive files whose hash the probe has just learned.
+    unchanged = set() if force else await _unchanged(session, [v for v, _ in versions.values()])
     wanted = structure.wanted_extractor()
     read_before = {
         d.version_id
         async for d in ExtractedDocument.find({"version_id": {"$in": version_ids}, "extractor": wanted})
-    }
-    rest = [v for vid, (v, _) in versions.items() if vid not in read_before]
+    } - unchanged
+    rest = [v for vid, (v, _) in versions.items() if vid not in read_before and vid not in unchanged]
     probes = {p.version_id: p async for p in FileProbe.find({"version_id": {"$in": [v.id for v in rest]}})}
     probes |= await _probe_all([v for v in rest if v.id not in probes], budget_s)
+    if not force:
+        learned = await _unchanged(session, [v for v in rest if v.sha256])
+        unchanged |= learned
+        rest = [v for v in rest if v.id not in learned]
 
     ocr_on = bool(s.ocr_model) and s.llm_provider != "fake"
     text = scans = pages = unreadable = unknown = 0
@@ -531,6 +579,7 @@ async def estimate(
         "scans": scans,
         "scan_pages": pages,
         "already_read": already,
+        "unchanged": len(unchanged),
         "unreadable": unreadable,
         "not_looked_at": unknown,
         "ocr_enabled": ocr_on,

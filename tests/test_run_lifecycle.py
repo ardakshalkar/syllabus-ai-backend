@@ -36,6 +36,11 @@ async def _session_with_queued_runs(ref, client_for) -> tuple[uuid.UUID, list[uu
             notify_school=False,
         )
         run_ids = await sessions.start(session, cs)
+        # The uploads were checked already and have not changed: without `force` the runs would take those
+        # results (checks.reusable_run) and these tests would never reach the AI.
+        await session.execute(
+            sa.update(AssessmentRun).where(AssessmentRun.id.in_(run_ids)).values(force=True)
+        )
         return cs.id, run_ids
 
 

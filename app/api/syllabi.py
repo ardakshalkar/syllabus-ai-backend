@@ -27,6 +27,7 @@ from app.schemas.syllabus import (
 )
 from app.services import approval, checks, syllabi
 from app.services.rubric import load_rubric
+from app.services.sessions import ensure_can_force
 from app.storage import files
 from app.storage.drive import explain_error
 from app.workers import dispatch
@@ -48,7 +49,9 @@ async def list_syllabi(
     q: str | None = None,
     mine: bool = Query(False, description="Only courses the current user leads"),
     discipline: str | None = Query(None, description="Drive discipline folder"),
-    folder_id: uuid.UUID | None = Query(None, description="Only syllabi that arrived through this School folder"),
+    folder_id: uuid.UUID | None = Query(
+        None, description="Only syllabi that arrived through this School folder"
+    ),
     include_missing: bool = Query(False, description="Also syllabi whose file left Google Drive"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -224,12 +227,24 @@ async def get_run(run_id: uuid.UUID, principal: CurrentUser, session: DbSession)
 
 
 @router.post("/versions/{version_id}/runs", response_model=RunOut, status_code=status.HTTP_201_CREATED)
-async def recheck(version_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+async def recheck(
+    version_id: uuid.UUID,
+    principal: CurrentUser,
+    session: DbSession,
+    force: bool = Query(
+        False,
+        description="administrators only: ask the AI again even if the file has not changed since its last "
+        "check (otherwise that check's result is taken at no cost)",
+    ),
+):
     version = await syllabi.get_version(session, version_id)
     syllabus = await syllabi.get_syllabus(session, version.syllabus_id)
     await ensure_can_view(session, principal, syllabus)
     await ensure_can_check(session, principal, syllabus.course_id)
-    run = await checks.create_run(session, version, trigger=Trigger.professor_manual, user_id=principal.id)
+    ensure_can_force(principal, force)
+    run = await checks.create_run(
+        session, version, trigger=Trigger.professor_manual, user_id=principal.id, force=force
+    )
     await session.commit()
     await dispatch.check_run(run.id)
     await session.refresh(run)

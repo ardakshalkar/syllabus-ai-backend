@@ -51,7 +51,9 @@ class SyllabusVersion(UUIDPk, CreatedAt, Base):
     file_path: Mapped[str | None] = mapped_column(sa.String(500))
     content_type: Mapped[str] = mapped_column(sa.String(120))
     size: Mapped[int]
-    sha256: Mapped[str | None] = mapped_column(sa.String(64))
+    # Of the file's bytes. An upload knows it at once; a version read from Drive learns it the first time its
+    # file is opened (a check or an estimate), which is how a re-check finds an unchanged file.
+    sha256: Mapped[str | None] = mapped_column(sa.String(64), index=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id"))
     issue_count: Mapped[int | None]
     source: Mapped[VersionSource] = mapped_column(str_enum(VersionSource))
@@ -85,6 +87,13 @@ class AssessmentRun(UUIDPk, CreatedAt, Base):
     # The programs the check compared the syllabus with, and why those (app.models.alignment.ProgramBasis).
     program_basis: Mapped[str | None] = mapped_column(sa.String(20))
     program_ids: Mapped[list[str] | None] = mapped_column(sa.JSON)
+    # Set by an administrator to ask the AI again even when an earlier check of the same file can be reused.
+    force: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    # The earlier completed check whose result this one took, because the file, the rubric and the programs
+    # it is compared with had not changed (services.checks.reusable_run); None when the AI was asked.
+    reused_from_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("assessment_runs.id", ondelete="SET NULL")
+    )
 
 
 class CriterionOutcome(Base):
