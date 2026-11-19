@@ -279,10 +279,11 @@ async def test_delete_folder_closes_a_check_left_with_no_files(ref, client_for):
     from app.auth.rbac import Principal
     from app.enums import CheckKind, SessionScope, SessionStatus
     from app.models import CheckSession
-    from app.services import sessions
+    from app.services import cost_estimate, sessions
 
     folder_id = await _link(ref, _school_folder())
     await drive_catalog.sync_folder(folder_id)
+    await cost_estimate.count_new_files()  # a check takes only counted files
     principal = Principal.of(ref["users"]["admin.digital"])
     common = dict(semester="Fall 2026", checks=list(CheckKind), scheduled_at=None,
                   notify_provost=False, notify_school=False)

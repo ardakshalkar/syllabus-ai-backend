@@ -27,6 +27,11 @@ class SessionCreate(Schema):
     estimated_cost_usd: float | None = Field(
         default=None, ge=0, description="the estimate (POST /sessions/estimate) the user saw and agreed to"
     )
+    only_counted: bool = Field(
+        default=False,
+        description="leave out the files not counted yet (services.cost_estimate); without it a check that "
+        "would take an uncounted file is refused (409), since nobody agreed to what it costs",
+    )
 
     @model_validator(mode="after")
     def _one_filter(self) -> "SessionCreate":
@@ -79,6 +84,9 @@ class EstimateIn(Schema):
     semester: str
     only_unchecked: bool = False
     only_checked: bool = False
+    only_counted: bool = Field(
+        default=False, description="only the files counted already: what a check started now could take"
+    )
 
 
 class EstimateFile(Schema):

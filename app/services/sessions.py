@@ -93,6 +93,7 @@ async def create(
     only_unchecked: bool = False,
     only_checked: bool = False,
     estimated_cost_usd: float | None = None,
+    only_counted: bool = False,
 ) -> tuple[CheckSession, list[uuid.UUID]]:
     """Returns the session and the run ids to dispatch after commit (empty when scheduled)."""
     school_id = await _scope_school(session, scope_type, scope_ref)
@@ -121,8 +122,9 @@ async def create(
     )
     session.add(cs)
     await session.flush()
-    run_ids = [] if scheduled_at and scheduled_at > _now() else await start(session, cs)
-    return cs, run_ids
+    if scheduled_at and scheduled_at > _now():
+        return cs, []
+    return cs, await start(session, cs, counted_only=only_counted, require_counted=True)
 
 
 async def scope_versions(
@@ -181,8 +183,23 @@ async def _resolve_versions(session: AsyncSession, cs: CheckSession) -> list[tup
     return [(r[0], r[1]) for r in (await session.execute(query)).all()]
 
 
-async def start(session: AsyncSession, cs: CheckSession) -> list[uuid.UUID]:
+async def start(
+    session: AsyncSession, cs: CheckSession, *, counted_only: bool = False, require_counted: bool = False
+) -> list[uuid.UUID]:
+    """Create the session's runs. Started by a person (require_counted), it takes only files whose cost was
+    counted before (services.cost_estimate): with `counted_only` the rest are left out, otherwise it is refused.
+    A scheduled session, started by celery beat, takes everything."""
     pairs = await _resolve_versions(session, cs)
+    if require_counted and pairs:
+        from app.services import cost_estimate
+
+        left_out = await cost_estimate.uncounted([v for _, v in pairs])
+        if left_out and not counted_only:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"{len(left_out)} files are not counted yet; wait for them or check only the counted ones",
+            )
+        pairs = [p for p in pairs if p[1] not in left_out]
     cs.status = SessionStatus.running
     cs.started_at = _now()
     checks = [CheckKind(c) for c in cs.checks]

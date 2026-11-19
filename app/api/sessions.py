@@ -43,7 +43,11 @@ async def estimate(body: EstimateIn, principal: CurrentUser, session: DbSession)
     """What a check with this scope would read (files, scans and their pages, files it cannot read) and roughly
     what it would cost, for the person starting it to agree to first. Opens files it has not seen before, so
     the first call for a new folder can take up to about 20 seconds."""
-    pairs = await sessions.scope_versions(session, principal, **body.model_dump())
+    only_counted = body.only_counted
+    pairs = await sessions.scope_versions(session, principal, **body.model_dump(exclude={"only_counted"}))
+    if only_counted:
+        left_out = await cost_estimate.uncounted([v for _, v in pairs])
+        pairs = [p for p in pairs if p[1] not in left_out]
     return await cost_estimate.estimate(session, pairs)
 
 

@@ -6,8 +6,9 @@ one of:
 - text: a Word file or a PDF with a text layer;
 - scan: a PDF without text, which the OCR model reads page by page first (app.ai.ocr);
 - unreadable: a type the checker does not take, an empty file, or one that does not open: no model is called;
-- not looked at: not opened within the time the estimate allows (Drive downloads are slow); costed by the
-  average of the others, and the range shows what it would be if none or all of them were scans.
+- not looked at: not opened yet within the time one estimate allows (Drive downloads are slow). They keep
+  opening in the background, and the window asks again until there are none: a check cannot be started on
+  files that were not counted. A file Drive would not hand over is counted as unreadable for that estimate.
 
 A file is opened once to learn which it is (FileProbe in Mongo); versions are immutable, so the answer is kept.
 
@@ -22,6 +23,7 @@ sessions that ran in that mode; a mode with too little history is priced from it
 """
 
 import asyncio
+import functools
 import logging
 import math
 import time
@@ -324,9 +326,13 @@ def _inspect(path: Path) -> tuple[str, int | None, str | None]:
         document.close()
 
 
-async def _probe(version: SyllabusVersion) -> FileProbe | None:
-    """Open the version's file once and remember what it is. None when it could not be fetched now (a Drive
-    download failing is not the file's fault; it is tried again next time)."""
+NOT_DOWNLOADED = "Could not be downloaded from Google Drive just now"
+
+
+async def _probe(version: SyllabusVersion) -> FileProbe:
+    """Open the version's file once and remember what it is. A download that fails is answered as unreadable
+    for this estimate only and not remembered (a Drive download failing is not the file's fault; it is tried
+    again next time)."""
     suffix = Path(version.filename).suffix.lower()
     reason: str | None
     if suffix not in SUPPORTED:
@@ -337,7 +343,7 @@ async def _probe(version: SyllabusVersion) -> FileProbe | None:
                 kind, pages, reason = await asyncio.to_thread(_inspect, path)
         except Exception as exc:
             log.info("could not open %s for the estimate: %s", version.filename, exc)
-            return None
+            return FileProbe(version_id=version.id, kind="unreadable", reason=NOT_DOWNLOADED)  # type: ignore[arg-type]
     probe = FileProbe(version_id=version.id, kind=kind, pages=pages, reason=reason)  # type: ignore[arg-type]
     try:
         await probe.insert()
@@ -346,24 +352,109 @@ async def _probe(version: SyllabusVersion) -> FileProbe | None:
     return probe
 
 
-async def _probe_all(versions: list[SyllabusVersion], budget_s: float) -> dict[uuid.UUID, FileProbe]:
-    gate = asyncio.Semaphore(PROBE_CONCURRENCY)
+# Files being opened, by version. A file not opened within its estimate's budget keeps downloading and stores
+# its probe when it finishes; the window asks again until every file is counted, and the next ask joins the
+# same download instead of starting another. (Cancelling them threw the download away, and a big Drive folder
+# then stayed "not opened" however many times it was estimated.)
+_inflight: dict[uuid.UUID, asyncio.Task[FileProbe]] = {}
+_gates: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
 
-    async def one(version: SyllabusVersion) -> FileProbe | None:
+
+def _gate() -> asyncio.Semaphore:
+    """At most PROBE_CONCURRENCY files open at once across all estimates (one gate per event loop)."""
+    loop = asyncio.get_running_loop()
+    if loop not in _gates:
+        _gates.clear()  # a new loop (tests) leaves the old gate unusable
+        _gates[loop] = asyncio.Semaphore(PROBE_CONCURRENCY)
+    return _gates[loop]
+
+
+def _finished(version_id: uuid.UUID, task: asyncio.Task[FileProbe]) -> None:
+    if _inflight.get(version_id) is task:
+        del _inflight[version_id]
+
+
+async def _probe_all(versions: list[SyllabusVersion], budget_s: float) -> dict[uuid.UUID, FileProbe]:
+    gate = _gate()
+
+    async def one(version: SyllabusVersion) -> FileProbe:
         async with gate:
             return await _probe(version)
 
-    tasks = [asyncio.create_task(one(v)) for v in versions]
+    tasks = []
+    for version in versions:
+        task = _inflight.get(version.id)
+        if task is None or task.get_loop() is not asyncio.get_running_loop():
+            task = asyncio.create_task(one(version))
+            _inflight[version.id] = task
+            task.add_done_callback(functools.partial(_finished, version.id))
+        tasks.append(task)
     if not tasks:
         return {}
-    done, pending = await asyncio.wait(tasks, timeout=budget_s)
-    for task in pending:
-        task.cancel()
+    done, _ = await asyncio.wait(tasks, timeout=budget_s)
     found = {}
     for task in done:
-        if not task.cancelled() and task.exception() is None and (probe := task.result()):
+        if not task.cancelled() and task.exception() is None:
+            probe = task.result()
             found[probe.version_id] = probe
     return found
+
+
+async def uncounted(version_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """The versions whose file nobody has counted yet: no check has read it and no estimate has opened it.
+    A check may not take these unless the person starting it chose to leave them out (sessions.start)."""
+    wanted = structure.wanted_extractor()
+    known = {
+        d.version_id
+        async for d in ExtractedDocument.find({"version_id": {"$in": version_ids}, "extractor": wanted})
+    }
+    known |= {p.version_id async for p in FileProbe.find({"version_id": {"$in": version_ids}})}
+    return set(version_ids) - known
+
+
+COUNT_LOCK = "estimate:count-files"
+COUNT_RUN_S = 30 * 60  # one background count stops after this; the next sync carries on where it left
+
+
+async def count_new_files(limit_s: float = COUNT_RUN_S) -> int:
+    """Open, in the background, every syllabus's current file that no check has read and no estimate has
+    counted yet, and remember what each is (FileProbe). Run after every Drive sync, so that by the time someone
+    asks what a check would cost, the files are counted already: a big Drive folder of scans (the Law School's
+    is about 2 GB) takes many minutes to download, far longer than anyone waits in the cost window.
+    Downloads only; no AI model is called. Returns how many files were counted."""
+    from app.db.pg import session_scope
+    from app.storage import cache
+
+    if not await cache.client().set(COUNT_LOCK, "1", nx=True, ex=int(limit_s) + 60):
+        log.info("a count of new files is already running")
+        return 0
+    try:
+        async with session_scope() as session:
+            versions = list(
+                (
+                    await session.scalars(
+                        sa.select(SyllabusVersion)
+                        .join(Syllabus, Syllabus.id == SyllabusVersion.syllabus_id)
+                        .where(
+                            SyllabusVersion.version == Syllabus.current_version,
+                            Syllabus.drive_missing_at.is_(None),
+                        )
+                    )
+                ).all()
+            )
+        left = await uncounted([v.id for v in versions])
+        todo = [v for v in versions if v.id in left]
+        if not todo:
+            return 0
+        log.info("counting %s new syllabus files in the background", len(todo))
+        started = time.monotonic()
+        found = await _probe_all(todo, limit_s)
+        log.info(
+            "counted %s of %s new syllabus files in %.0f s", len(found), len(todo), time.monotonic() - started
+        )
+        return len(found)
+    finally:
+        await cache.client().delete(COUNT_LOCK)
 
 
 def _money(value: float) -> float:

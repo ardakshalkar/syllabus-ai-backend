@@ -22,6 +22,8 @@ celery_app.conf.update(
             "task": "syllabus.sync_drive_catalog",
             "schedule": float(settings.drive_sync_interval_s),
         },
+        # Files a sync found but a count did not finish (it stops after 30 minutes): carried on hourly.
+        "count-new-files": {"task": "syllabus.count_new_files", "schedule": 3600.0},
         # Runs left Processing by a killed worker; see app/services/run_live.py.
         "recover-stale-runs": {"task": "syllabus.recover_stale_runs", "schedule": 120.0},
     },
