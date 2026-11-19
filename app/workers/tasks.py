@@ -46,6 +46,13 @@ def sync_drive_files() -> None:
     runtime.run(sync_pending_files)
 
 
+@celery_app.task(name="syllabus.count_new_files")
+def count_new_files() -> None:
+    from app.services.cost_estimate import count_new_files as count
+
+    runtime.run(count)
+
+
 @celery_app.task(name="syllabus.sync_drive_catalog")
 def sync_drive_catalog(school_id: str | None = None, scheduled: bool = True) -> None:
     from app.services import drive_catalog

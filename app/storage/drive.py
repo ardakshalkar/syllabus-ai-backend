@@ -150,6 +150,7 @@ class StubDrive:
 
 
 _SCOPE = "https://www.googleapis.com/auth/{}"
+DRIVE_TIMEOUT_S = 120  # one request to Drive (a syllabus scan of several MB downloads in well under this)
 
 
 def load_credentials(path: Path, *, read_only: bool, impersonate: str = ""):
@@ -287,7 +288,12 @@ class GoogleDrive:
                 read_only=config.read_only,
                 impersonate=config.impersonate_user,
             )
-            self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
+            import google_auth_httplib2
+            import httplib2
+
+            # Without a timeout a request Drive never answers waits forever (httplib2's default).
+            http = google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http(timeout=DRIVE_TIMEOUT_S))
+            self._service = build("drive", "v3", http=http, cache_discovery=False)
         return self._service
 
     def folder_info(self, folder_id: str) -> dict:

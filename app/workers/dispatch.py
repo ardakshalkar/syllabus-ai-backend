@@ -38,6 +38,22 @@ async def precheck(job_id: str) -> None:
     await _send("syllabus.precheck", job_id)
 
 
+_counting: set[asyncio.Task[int]] = set()  # eager counts running in this process
+
+
+async def count_new_files() -> None:
+    """Count, in the background, the syllabus files no estimate has opened yet (services.cost_estimate).
+    Even with TASKS_EAGER this is not awaited: it can take many minutes, and nobody waits on it."""
+    if get_settings().tasks_eager:
+        from app.services.cost_estimate import count_new_files as count
+
+        task = asyncio.create_task(count())
+        _counting.add(task)
+        task.add_done_callback(_counting.discard)
+        return
+    await _send("syllabus.count_new_files")
+
+
 async def sync_drive_catalog(school_id: uuid.UUID | None = None) -> None:
     """Re-read the Schools' Drive folders now (one School's, or all)."""
     if get_settings().tasks_eager:

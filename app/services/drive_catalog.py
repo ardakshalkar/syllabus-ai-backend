@@ -527,9 +527,17 @@ async def sync_all(school_id: uuid.UUID | None = None) -> list[SyncReport]:
             if school_id is not None:
                 query = query.where(UploadFolder.school_id == school_id)
             folder_ids = list(await session.scalars(query))
-        return [await sync_folder(f) for f in folder_ids]
+        reports = [await sync_folder(f) for f in folder_ids]
     finally:
         await cache.client().delete(_LOCK)
+    # Open the new files now, so the cost window before a check finds them counted (services.cost_estimate).
+    try:
+        from app.workers import dispatch
+
+        await dispatch.count_new_files()
+    except Exception:
+        log.warning("could not start counting the new files", exc_info=True)
+    return reports
 
 
 async def mark_requested() -> None:

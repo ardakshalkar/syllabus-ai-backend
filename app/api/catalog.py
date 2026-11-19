@@ -59,6 +59,7 @@ from app.services import drive_admin, drive_catalog
 from app.services.sessions import ensure_can_manage, settle_open_sessions
 from app.storage import drive, drive_config
 from app.storage.drive import GONE_HINT, explain_folder_error, folder_exists, share_hint
+from app.workers import dispatch
 
 router = APIRouter(tags=["catalog"])
 
@@ -352,6 +353,9 @@ async def read_folder(folder_id: uuid.UUID, principal: CurrentUser, session: DbS
     report = await drive_catalog.sync_folder(
         folder.id, reuse_listing_s=drive_catalog.LISTING_REUSE_S if reuse else 0
     )
+    if report.added or report.updated:
+        # Start opening the new files now, so the cost window before a check finds them counted.
+        await dispatch.count_new_files()
     return FolderReadOut(
         folder_id=folder.id,
         disciplines=report.disciplines,
