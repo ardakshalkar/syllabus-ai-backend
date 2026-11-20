@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     # Nov 2026 were under 3,300 tokens (largest 4,355); without a cap two looped to the model's 131,072, taking
     # 9 minutes and $0.05 each. A cut-off answer is not retried: at temperature 0 it would loop again.
     translation_max_output_tokens: int = 8192
+    # Longest answer for one request of the chat model (criteria, explanations, structure, repairs). Up to Nov 2026
+    # the longest real answer was 11,309 tokens (Qwen deciding all 49 criteria in one request) and a Gemma answer
+    # for one principle at most 6,178; 16 explain answers looped to the model's 131,072 (minutes and ~$0.05 each).
+    # A cut-off answer is not retried, and its criteria become "Cannot verify". 0: no cap.
+    llm_max_output_tokens: int = 16384
     # OpenRouter's key. LLM_PROVIDER=openrouter uses it when LLM_API_KEY is not set, and the decision model
     # always does, so one key in .env serves both.
     openrouter_api_key: str = ""

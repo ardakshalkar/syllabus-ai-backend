@@ -476,3 +476,31 @@ def test_check_mode_evaluator():
     standard = evaluator(CheckMode())
     assert standard.criteria_calls == 0
     assert CheckMode(SINGLE, "qwen/qwen4-max").label == "One request: qwen4-max"
+
+
+async def test_a_cut_off_answer_leaves_its_principle_unverified_not_the_check(tmp_path):
+    from app.ai.llm import AnswerTooLongError
+
+    class LoopingProvider(FakeProvider):
+        async def complete_json(self, *, purpose, system, user, schema, meta=None, run_id=None, trace=True):  # type: ignore[no-untyped-def]
+            if purpose == "criteria" and any(s.principle == 4 for s in (meta or {}).get("criteria", [])):
+                raise AnswerTooLongError("cut off at the cap")
+            return await super().complete_json(
+                purpose=purpose,
+                system=system,
+                user=user,
+                schema=schema,
+                meta=meta,
+                run_id=run_id,
+                trace=trace,
+            )
+
+    content = extract(_write(tmp_path, sample_syllabus("Artificial Intelligence", with_issues=True)))
+    output = await pipeline.evaluate(content, _specs(), LoopingProvider(), trace=False)
+    assert len(output.results) == 49
+    looped = [r for r in output.results if r.criterion_id.startswith("4.")]
+    assert looped and all(r.status == ResultStatus.cannot_verify for r in looped)
+    assert all("cut off" in r.explanation for r in looped)
+    assert any(
+        r.status != ResultStatus.cannot_verify for r in output.results if not r.criterion_id.startswith("4.")
+    )
