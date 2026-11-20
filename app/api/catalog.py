@@ -261,6 +261,12 @@ async def _folder_out(session: DbSession, folder: UploadFolder) -> FolderOut:
     )
 
 
+DUPLICATE_FOLDER_NAME = (
+    "This School already has a folder with this name for this semester. "
+    "Give the new folder a different name, for example add the department to it."
+)
+
+
 async def _checked_drive_folder(drive_folder_id: str | None) -> str | None:
     cleaned = (drive_folder_id or "").strip()
     if not cleaned:
@@ -305,7 +311,7 @@ async def create_folder(school_id: uuid.UUID, body: FolderIn, principal: Current
     try:
         await session.commit()
     except sa.exc.IntegrityError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, "This folder already exists") from exc
+        raise HTTPException(status.HTTP_409_CONFLICT, DUPLICATE_FOLDER_NAME) from exc
     return await _folder_out(session, folder)
 
 
@@ -400,7 +406,7 @@ async def update_folder(folder_id: uuid.UUID, body: FolderPatch, principal: Curr
     try:
         await session.commit()
     except sa.exc.IntegrityError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, "This folder already exists") from exc
+        raise HTTPException(status.HTTP_409_CONFLICT, DUPLICATE_FOLDER_NAME) from exc
     return await _folder_out(session, folder)
 
 

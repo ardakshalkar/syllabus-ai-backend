@@ -134,7 +134,7 @@ class UploadFolder(UUIDPk, CreatedAt, Base):
     """
 
     __tablename__ = "upload_folders"
-    __table_args__ = (sa.UniqueConstraint("school_id", "path"),)
+    __table_args__ = (sa.UniqueConstraint("school_id", "semester", "path"),)
 
     school_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("schools.id"), index=True)
     path: Mapped[str] = mapped_column(sa.String(300))
