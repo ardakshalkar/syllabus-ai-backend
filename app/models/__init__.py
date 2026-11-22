@@ -13,6 +13,7 @@ from app.models.org import (
 )
 from app.models.rubric import Criterion, Principle, RubricVersion
 from app.models.semester import Semester
+from app.models.study_plan import PlanSource, PlanStatus, StudyPlan, StudyPlanCourse, StudyPlanEvent
 from app.models.syllabus import AssessmentRun, CriterionOutcome, Syllabus, SyllabusVersion
 from app.models.workflow import (
     ApprovalEvent,
@@ -24,6 +25,11 @@ from app.models.workflow import (
 )
 
 __all__ = [
+    "PlanSource",
+    "PlanStatus",
+    "StudyPlan",
+    "StudyPlanCourse",
+    "StudyPlanEvent",
     "AppSetting",
     "ApprovalEvent",
     "AssessmentRun",

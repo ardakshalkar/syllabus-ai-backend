@@ -2,7 +2,8 @@
 `python -m app.cli create-db`, `python -m app.cli drive-check`, `python -m app.cli drive-setup <shared folder id>`,
 `python -m app.cli setup-schools`, `python -m app.cli add-test-users [--password]`,
 `python -m app.cli set-password EMAIL`, `python -m app.cli bootstrap` (Schools, rubric and test users at once),
-`python -m app.cli import-users users.csv`, `python -m app.cli import-programs [--dry-run] [--code 6B04103]`."""
+`python -m app.cli import-users users.csv`, `python -m app.cli import-programs [--dry-run] [--code 6B04103]`,
+`python -m app.cli import-study-plans var/study_plans.json [--dry-run]`."""
 
 import argparse
 import asyncio
@@ -291,6 +292,27 @@ async def _create_db() -> None:
         await conn.close()
 
 
+async def _import_study_plans(path: str, dry_run: bool) -> None:
+    """Learning plans from the PlatonusAIAdvisor export (scripts/export_study_plans.py); idempotent."""
+    import json
+    from pathlib import Path
+
+    from app.services import study_plans as sp
+
+    data = json.loads(await asyncio.to_thread(Path(path).read_text, encoding="utf-8"))
+    async with pg.session_scope() as session:
+        report = await sp.import_export(session, data, dry_run=dry_run)
+        if dry_run:
+            await session.rollback()
+    head = "dry run, nothing saved: would create" if dry_run else "created"
+    print(
+        f"{head} {report['created']}, {'would update' if dry_run else 'updated'} {report['updated']}, "
+        f"unchanged {report['unchanged']}"
+    )
+    for label in report["skipped_edited"]:
+        print(f"  left alone (edited by hand): {label}")
+
+
 async def _import_programs(codes: list[str], dry_run: bool) -> None:
     """Educational programs with their learning outcomes and disciplines, from narxoz.edu.kz (idempotent)."""
     import httpx
@@ -357,6 +379,8 @@ async def _main(args: argparse.Namespace) -> None:
             await _add_test_users(args.instructor, _read_password(args.password), args.allow_prod)
         elif args.command == "import-programs":
             await _import_programs(args.code, args.dry_run)
+        elif args.command == "import-study-plans":
+            await _import_study_plans(args.file, args.dry_run)
         elif args.command == "drive-check":
             if not await _drive_check(args.folder, args.write):
                 raise SystemExit(1)
@@ -489,6 +513,12 @@ def main() -> None:
         "--code", action="append", default=[], metavar="CODE", help="only this program, e.g. 6B04103 (repeat)"
     )
     programs.add_argument("--dry-run", action="store_true", help="read and report, change nothing")
+    plans = sub.add_parser(
+        "import-study-plans",
+        help="load learning plans from the PlatonusAIAdvisor export file (scripts/export_study_plans.py)",
+    )
+    plans.add_argument("file", help="the export file, e.g. var/study_plans.json")
+    plans.add_argument("--dry-run", action="store_true", help="count what would change, save nothing")
     check = sub.add_parser(
         "drive-check", help="check the Google Drive credentials and folders (GOOGLE_DRIVE_SETUP.md)"
     )

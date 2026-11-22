@@ -14,6 +14,7 @@ from app.api import (
     precheck,
     semesters,
     sessions,
+    study_plans,
     syllabi,
     wizard,
 )
@@ -35,5 +36,6 @@ for module in (
     analytics,
     notifications,
     semesters,
+    study_plans,
 ):
     api_router.include_router(module.router)
