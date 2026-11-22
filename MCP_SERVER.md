@@ -73,6 +73,8 @@ exists in the API and avoids the excluded prefixes will tell you if it is a bad 
 
 ## Which user
 
+> A per-person sign-in (a "Connect MCP" button, no shared account) is being built on OAuth: see CONNECTED_APPS.md. The backend half exists; this server will use it once it can serve over HTTP.
+
 The server acts as one user, so give it its own account with only the role it needs:
 - Reading only: a user with a role that sees what you want it to see (a Provost Office or School administrator account sees more
   than a professor's). Roles are the app's; the MCP adds no rights.

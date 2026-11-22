@@ -11,6 +11,7 @@ from app.api import (
     improve,
     me,
     notifications,
+    oauth,
     precheck,
     semesters,
     sessions,
@@ -35,6 +36,7 @@ for module in (
     sessions,
     analytics,
     notifications,
+    oauth,
     semesters,
     study_plans,
 ):

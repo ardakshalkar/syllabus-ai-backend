@@ -5,6 +5,7 @@ import sqlalchemy as sa
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.oauth import well_known
 from app.api.router import api_router
 from app.config import get_settings
 from app.db import pg
@@ -39,6 +40,7 @@ def create_app(*, use_lifespan: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(api_router, prefix=settings.api_prefix)
+    app.include_router(well_known)  # /.well-known/oauth-authorization-server, at the root as RFC 8414 wants
 
     @app.get("/health", tags=["health"])
     async def health() -> dict:

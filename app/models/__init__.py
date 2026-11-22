@@ -1,5 +1,6 @@
 from app.models.alignment import CourseProgram, LinkSource, OutcomeLink, ProgramBasis
 from app.models.base import Base
+from app.models.oauth import OAuthClient, OAuthGrant
 from app.models.org import (
     Course,
     Program,
@@ -25,6 +26,8 @@ from app.models.workflow import (
 )
 
 __all__ = [
+    "OAuthClient",
+    "OAuthGrant",
     "PlanSource",
     "PlanStatus",
     "StudyPlan",
