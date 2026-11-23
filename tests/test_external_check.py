@@ -89,9 +89,16 @@ async def test_a_full_external_check_becomes_a_run_the_analysis_sees(ref, client
     assert any("External AI check (Claude Opus)" in (a.get("comment") or "") for a in activity)
     triggers = (await provost.get("/analytics/runs-by-trigger", params={"semester": "Fall 2026"})).json()
     assert {"trigger": "External AI", "runs": 1} in triggers
+    # lists and the detail say who judged; the analysis counts how many of the checked were judged from outside
+    listed = (await provost.get("/syllabi", params={"semester": "Fall 2026"})).json()["items"]
+    assert [i["external_model"] for i in listed if i["id"] == syllabus_id] == ["Claude Opus"]
+    assert all(i["external_model"] is None for i in listed if i["id"] != syllabus_id)
+    assert (await provost.get(f"/syllabi/{syllabus_id}")).json()["external_model"] == "Claude Opus"
     # the analysis and the review report (JSON and PDF) take the stored result like any other
     summary = await provost.get("/analysis", params={"semester": "Fall 2026"})
     assert summary.status_code == 200, summary.text
+    assert summary.json()["totals"]["external"] == 1
+    assert sum(s["external"] for s in summary.json()["schools"]) == 1
     report = await provost.get("/analysis/report", params={"semester": "Fall 2026"})
     assert report.status_code == 200, report.text
     courses = (
