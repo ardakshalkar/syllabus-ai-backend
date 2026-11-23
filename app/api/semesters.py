@@ -59,7 +59,7 @@ async def list_semesters(principal: CurrentUser, session: DbSession) -> list[Sem
 async def create_semester(body: SemesterIn, principal: CurrentUser, session: DbSession) -> SemesterOut:
     _ensure_keeps_semesters(principal)
     if await session.scalar(sa.select(Semester.id).where(sa.func.lower(Semester.name) == body.name.lower())):
-        raise HTTPException(status.HTTP_409_CONFLICT, f"{body.name} already exists")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"The semester {body.name} already exists")
     semester = Semester(name=body.name, starts_on=body.starts_on, ends_on=body.ends_on)
     session.add(semester)
     await session.flush()
@@ -87,7 +87,10 @@ async def update_semester(
     if body.is_current:
         await _make_current(session, semester)
     elif body.is_current is False and semester.is_current:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Make another semester current instead")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "A semester stops being current only when another one is made current",
+        )
     await session.commit()
     return _out(semester, await _in_use(session))
 
@@ -103,7 +106,8 @@ async def delete_semester(semester_id: uuid.UUID, principal: CurrentUser, sessio
         raise HTTPException(status.HTTP_409_CONFLICT, "The current semester cannot be deleted")
     if (await _in_use(session)).get(semester.name):
         raise HTTPException(
-            status.HTTP_409_CONFLICT, f"{semester.name} already has syllabi, folders or sessions"
+            status.HTTP_409_CONFLICT,
+            f"{semester.name} already has syllabi, folders or sessions, so it cannot be deleted",
         )
     await session.delete(semester)
     await session.commit()

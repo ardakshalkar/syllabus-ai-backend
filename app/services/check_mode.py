@@ -126,8 +126,8 @@ def evaluator(mode: CheckMode) -> Evaluator:
         if s.llm_provider == "fake":  # tests and local runs without a model: it stands in for any model
             llm = get_llm()
         elif s.llm_provider == "ollama":
-            llm = OllamaProvider(mode.model)
+            llm = OllamaProvider(mode.model, s.llm_max_output_tokens or None)
         else:
-            llm = VllmProvider(mode.model)
+            llm = VllmProvider(mode.model, s.llm_max_output_tokens or None)
         return Evaluator(llm, None, 1)
     return Evaluator(get_llm(), get_decider(), 0)
