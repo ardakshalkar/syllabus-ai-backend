@@ -77,6 +77,7 @@ class ApiClient:
         for name in tool.path_params:
             path = path.replace("{" + name + "}", quote(str(arguments[name]), safe=""))
         params = {k: v for k, v in arguments.items() if k in tool.query_params and v is not None}
+        params |= tool.fixed_query
         body = arguments.get("body") if tool.has_body else None
         if token is not None:
             response = await self._request_as(token, tool.method, path, params, body)

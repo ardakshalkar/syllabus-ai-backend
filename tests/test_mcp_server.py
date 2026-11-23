@@ -239,3 +239,22 @@ async def test_the_verifier_asks_the_backend_and_remembers_for_a_moment():
 
     both = await BackendTokenVerifier("http://x/i", transport=httpx.MockTransport(write)).verify_token("t")
     assert both.scopes == ["mcp:read", "mcp:write"]
+
+
+async def test_check_results_are_asked_for_in_the_compact_form(spec):
+    """A full result is 85-95 thousand characters, more than one answer may hold: the model gets it without the
+    translations, and is not offered the switch."""
+    tools = {t.name: t for t in catalog.build_tools(spec, "read")}
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json={"results": []})
+
+    client = _client(handler, token="t")
+    for name, args in (("get_check_run", {"run_id": "x"}), ("get_latest_check", {"version_id": "y"})):
+        assert "compact" not in tools[name].input_schema["properties"], name
+        assert tools[name].fixed_query == {"compact": True}
+        await client.call(tools[name], args)
+    assert [p["compact"] for p in seen] == ["true", "true"]
+    await client.aclose()

@@ -158,3 +158,29 @@ async def test_a_version_without_text_cannot_be_checked_from_outside(ref, client
     await doc.save()
     r = await provost.post(f"/versions/{version_id}/external-check", json=body)
     assert r.status_code == 409 and "no text" in r.json()["detail"]
+
+
+async def test_a_compact_result_has_the_same_findings_without_the_bulk(ref, client_for):
+    _, version_id = await _setup(ref, client_for)
+    provost = client_for(ref["users"]["provost"])
+    codes = await _codes(provost)
+    quote = await _quote(provost, version_id)
+    body = _answer(
+        codes, quote, **{codes[0].replace(".", "_"): {"status": "Not compliant", "explanation": "No."}}
+    )
+    run_id = (await provost.post(f"/versions/{version_id}/external-check", json=body)).json()["run_id"]
+
+    full = (await provost.get(f"/runs/{run_id}")).json()
+    compact = (await provost.get(f"/runs/{run_id}", params={"compact": "true"})).json()
+    latest = (await provost.get(f"/versions/{version_id}/runs/latest", params={"compact": "true"})).json()
+    assert [r["criterion_id"] for r in compact["results"]] == [r["criterion_id"] for r in full["results"]]
+    for slim, whole in zip(compact["results"], full["results"], strict=True):
+        assert (slim["status"], slim["evidence"], slim["explanation"], slim["severity"]) == (
+            whole["status"],
+            whole["evidence"],
+            whole["explanation"],
+            whole["severity"],
+        )
+        assert slim["translations"] == {} and slim["evidence_context"] is None and slim["texts"] is None
+    assert latest["id"] == run_id and latest["results"][0]["texts"] is None
+    assert compact["issues"] == full["issues"] == 1
