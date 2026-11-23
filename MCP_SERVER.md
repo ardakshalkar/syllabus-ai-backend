@@ -46,7 +46,7 @@ The proxy in front sends three paths to the right place:
 | everything else | the frontend |
 
 Set `OAUTH_ISSUER` on the API and `MCP_ISSUER` here to the public address if they differ from what the proxy forwards.
-What a person sees depends on the access they gave: with read access the 41 read tools, with write access all 51; a
+What a person sees depends on the access they gave: with read access the 41 read tools, with write access all 52; a
 call is also refused by the API if their role does not allow it.
 
 ## Connect Claude (one fixed user, on your own machine)
@@ -78,7 +78,7 @@ Cumulative: `write` includes `read`.
 - Study plans: `list_study_plans`, `get_study_plan`, `get_study_plan_history`, `match_course_to_plans` (reads a course's syllabus header), `find_course_in_plans` (looks a code or title up)
 - `list_notifications`
 
-**write** (+10): `create_study_plan`, `update_study_plan`, `replace_study_plan_courses`, `activate_study_plan`, `archive_study_plan`, `delete_draft_study_plan`, `import_study_plans`, `set_course_programs`, `comment_on_syllabus`, `mark_notification_read`.
+**write** (+11): `submit_external_check` (saves a check your own AI made, see below), `create_study_plan`, `update_study_plan`, `replace_study_plan_courses`, `activate_study_plan`, `archive_study_plan`, `delete_draft_study_plan`, `import_study_plans`, `set_course_programs`, `comment_on_syllabus`, `mark_notification_read`.
 
 There is no tool that costs money or sends anything out: no AI checks, no approval moves, no e-mailed reports. Those stay on the screens.
 
@@ -90,7 +90,17 @@ The checker's own AI runs cost money, so they are not offered. A person can inst
 (on their own subscription) do the judging: it reads the rubric and the syllabus through these tools, and the person
 reads the answer. Try: *"Take the latest syllabus of Machine Learning and judge it against the rubric. Quote the text for
 each criterion, and say which are missing."* The model calls `get_rubric` (criteria with guidance), `get_syllabus` and
-`get_syllabus_text`. Post the result to the syllabus only if you ask it to (`comment_on_syllabus`, write tier).
+`get_syllabus_text`. To keep the result in the system, ask it to save it: `submit_external_check` (write tier; the Provost Office, KOK and
+the School's administrators). It must answer **every** criterion of the active rubric once, each with a quote from
+the text. A quote that is not in the syllabus is not accepted: that criterion becomes *Cannot verify*, and the answer
+lists which. The check is stored as a completed run marked **External AI** with the model's name, never reused as the
+checker's own answer, and the analysis, the heat map and the review report (JSON and PDF) count it like any other. It is
+free. Course leaders cannot add one for their own syllabus. For a plain note use `comment_on_syllabus`.
+
+*Whole university:* ask a Claude Code or similar agent to go through the syllabi one by one (`list_syllabi`, then for
+each `get_syllabus_text` and `submit_external_check`); a chat window will not hold hundreds of 20,000-character texts.
+Different people's AIs judge differently, so the model's name stays on every run; decide whether such runs go into an
+official report alongside the checker's own.
 
 Know that the syllabus text then goes to the company behind that AI, under the person's own account and terms. A person
 sees only the syllabi their role lets them see.

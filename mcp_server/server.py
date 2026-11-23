@@ -15,7 +15,9 @@ INSTRUCTIONS = (
     "in its description. Study plans created through these tools are drafts until a School administrator activates them. "
     "To judge a syllabus yourself: get_rubric (the criteria and their guidance), get_syllabus then get_syllabus_text for "
     "the latest version, and compare. Quote the syllabus for every finding, say Compliant / Partial / Missing / Cannot "
-    "tell for each criterion, and only post it (comment_on_syllabus) when the user asks you to."
+    "tell for each criterion, and keep it to yourself until the user asks you to save it. To save the result in the system use "
+    "submit_external_check: every criterion of the rubric exactly once, each with a quote from the text (a quote that is "
+    "not in the text is not accepted). For a plain note use comment_on_syllabus."
 )
 
 

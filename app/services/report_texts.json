@@ -132,7 +132,8 @@
   "minor": "шамалы",
   "more in Syllabus AI": "тағы Syllabus AI-да",
   "of checked": "тексерілгеннен",
-  "syllabi": "силлабус"
+  "syllabi": "силлабус",
+  "Checked by an outside AI": "Сыртқы ЖИ тексерген"
  },
  "ru": {
   "Academic integrity rules are present": "Присутствуют правила академической честности",
@@ -267,6 +268,7 @@
   "minor": "незнач.",
   "more in Syllabus AI": "ещё в Syllabus AI",
   "of checked": "от проверенных",
-  "syllabi": "силлабусов"
+  "syllabi": "силлабусов",
+  "Checked by an outside AI": "Проверено внешним ИИ"
  }
 }

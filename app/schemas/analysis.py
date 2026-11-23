@@ -21,6 +21,9 @@ class SeverityCounts(Schema):
     clean: int = Field(description="checked syllabi with no findings")
     cannot_check: int
     not_checked: int
+    external: int = Field(
+        default=0, description="of the checked ones, how many were judged by an outside AI (External AI)"
+    )
 
 
 class TopIssue(Schema):
@@ -44,6 +47,7 @@ class AttentionCourse(Schema):
     major: int
     minor: int
     top_issue: TopIssue | None
+    external_model: str | None = Field(default=None, description="set when an outside AI judged it")
 
 
 class AnalysisOut(Schema):
@@ -87,6 +91,10 @@ class ReportCourse(Schema):
     critical: int
     major: int
     minor: int
+    external_model: str | None = Field(
+        default=None,
+        description="set when a person's own AI judged this syllabus (External AI), not the checker",
+    )
     findings: list[ReportFinding]
 
 

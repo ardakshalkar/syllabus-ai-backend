@@ -37,6 +37,9 @@ class SyllabusOut(Schema):
     in_drive: bool = Field(default=False, description="the current version is read from Google Drive")
     drive_missing: bool = Field(default=False, description="the file is no longer in its Drive folder")
     last_checked_version: int | None = None
+    external_model: str | None = Field(
+        default=None, description="set when its latest check was made by a person's own AI (External AI)"
+    )
     drive_changed: bool = Field(
         default=False, description="the file changed in Drive after its last check: check it again"
     )
