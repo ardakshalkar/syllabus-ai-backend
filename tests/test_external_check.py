@@ -1,6 +1,9 @@
 """A check made by a person's own AI (through the MCP server) is stored as a run the analysis counts."""
 
+import io
 import uuid
+
+import pytest
 
 from app.documents import ExtractedDocument
 from seed.samples import sample_syllabus
@@ -91,8 +94,17 @@ async def test_a_full_external_check_becomes_a_run_the_analysis_sees(ref, client
     assert summary.status_code == 200, summary.text
     report = await provost.get("/analysis/report", params={"semester": "Fall 2026"})
     assert report.status_code == 200, report.text
-    pdf = await provost.get("/analysis/report.pdf", params={"semester": "Fall 2026"})
+    courses = (
+        await provost.get("/analysis/report", params={"semester": "Fall 2026", "include": "all"})
+    ).json()["courses"]
+    assert [c["external_model"] for c in courses if c["syllabus_id"] == syllabus_id] == ["Claude Opus"]
+    pdf = await provost.get(
+        "/analysis/report.pdf", params={"semester": "Fall 2026", "include": "all", "lang": "ru"}
+    )
     assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
+    pdfminer = pytest.importorskip("pdfminer.high_level")
+    page_text = " ".join(pdfminer.extract_text(io.BytesIO(pdf.content)).split())
+    assert "Проверено внешним ИИ: Claude Opus" in page_text  # the course page says who judged it
 
 
 async def test_every_criterion_must_be_answered_once_and_only_real_ones(ref, client_for):

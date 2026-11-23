@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.rbac import Principal
 from app.documents import AssessmentResultDoc
-from app.enums import ISSUE_STATUSES, AiStatus, ResultStatus, RunStatus, Severity, severity
+from app.enums import ISSUE_STATUSES, AiStatus, ResultStatus, RunStatus, Severity, Trigger, severity
 from app.models import AssessmentRun, Criterion, CriterionOutcome, School, Syllabus, SyllabusVersion
 from app.services import analytics
 from app.services.rubric import LoadedRubric, load_rubric
@@ -194,10 +194,16 @@ async def report(
     if picked:
         ids = [r.Syllabus.id for r in picked]
         runs = {
-            sid: (run_id, rubric_id)
-            for sid, run_id, rubric_id in (
+            sid: (run_id, rubric_id, trigger, model)
+            for sid, run_id, rubric_id, trigger, model in (
                 await session.execute(
-                    sa.select(Syllabus.id, AssessmentRun.id, AssessmentRun.rubric_version_id)
+                    sa.select(
+                        Syllabus.id,
+                        AssessmentRun.id,
+                        AssessmentRun.rubric_version_id,
+                        AssessmentRun.trigger,
+                        AssessmentRun.model_version,
+                    )
                     .join(
                         SyllabusVersion,
                         sa.and_(
@@ -215,11 +221,11 @@ async def report(
         docs = {
             d.run_id: d
             for d in await AssessmentResultDoc.find(
-                {"run_id": {"$in": [run_id for run_id, _ in runs.values()]}}
+                {"run_id": {"$in": [run_id for run_id, *_ in runs.values()]}}
             ).to_list()
         }
         rubrics: dict[uuid.UUID, LoadedRubric] = {}
-        for _, rubric_id in runs.values():
+        for _, rubric_id, *_ in runs.values():
             if rubric_id not in rubrics:
                 rubrics[rubric_id] = await load_rubric(session, rubric_id)
         rank = {Severity.critical: 0, Severity.major: 1, Severity.minor: 2}
@@ -259,8 +265,17 @@ async def report(
                     "program_name": r.program_name,
                     "professor_name": r.professor_name,
                     "language": r.Syllabus.language,
+                    # The AI of a person's own that judged it (an External AI run), else None: the checker did.
+                    "external_model": _external_model(run),
                     **_severities(r.Syllabus),
                     "findings": findings,
                 }
             )
     return {**head, "include": include, "generated_at": datetime.now(UTC), "courses": courses}
+
+
+def _external_model(run: tuple | None) -> str | None:
+    """The name of the outside AI behind a run, or None for the checker's own."""
+    if run is None or run[2] != Trigger.external_ai:
+        return None
+    return (run[3] or "").removeprefix("external:").strip() or "AI"

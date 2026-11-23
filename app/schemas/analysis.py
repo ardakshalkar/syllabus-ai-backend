@@ -87,6 +87,10 @@ class ReportCourse(Schema):
     critical: int
     major: int
     minor: int
+    external_model: str | None = Field(
+        default=None,
+        description="set when a person's own AI judged this syllabus (External AI), not the checker",
+    )
     findings: list[ReportFinding]
 
 

@@ -508,6 +508,10 @@ def _course(pdf: _Pdf, c: dict) -> None:
         x for x in [c["professor_name"] or tr("No professor matched"), language, tr(school), program] if x
     )
     pdf.text_block(meta, _META, color=_MUTED, gap=1.5)
+    if c.get("external_model"):
+        pdf.text_block(
+            f"{tr('Checked by an outside AI')}: {c['external_model']}", _META, color=_AMBER_TEXT, gap=1.5
+        )
     x, y = pdf.l_margin, pdf.get_y()
     for sev, fill, color in (
         ("critical", _RED_SOFT, _RED_TEXT),
