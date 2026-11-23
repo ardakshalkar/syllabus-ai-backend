@@ -8,16 +8,20 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.auth.rbac import ensure_can_view, forbidden, manages_school
 from app.deps import CurrentUser, DbSession
+from app.enums import Role
 from app.models import Course, Program, School
 from app.schemas.alignment import (
     CourseProgramsIn,
     CourseProgramsOut,
+    OutcomeTextIn,
     ProgramCoverageOut,
     SchoolCoverageOut,
     SyllabusAlignmentOut,
+    UniversityCoverageOut,
 )
+from app.schemas.catalog import ProgramDetailOut
 from app.services import alignment_views as views
-from app.services import program_links
+from app.services import program_links, program_outcomes
 from app.services.syllabi import get_syllabus
 
 router = APIRouter(tags=["alignment"])
@@ -82,3 +86,50 @@ async def program_coverage(program_id: uuid.UUID, semester: str, principal: Curr
     if not await views.can_see_school(session, principal, program.school_id):
         raise forbidden()
     return await views.program_coverage(session, program, semester)
+
+
+@router.get("/alignment/overview", response_model=UniversityCoverageOut)
+async def university_coverage(semester: str, principal: CurrentUser, session: DbSession):
+    """Every School's programs and how much of their outcomes the checked courses cover: for the Provost Office."""
+    if not principal.has(Role.admin, Role.provost, Role.kok):
+        raise forbidden("Only the Provost Office, KOK or an administrator can see every School's programs")
+    return await views.university_coverage(session, semester)
+
+
+async def _editable_program(session, principal, program_id: uuid.UUID) -> Program:
+    program = await program_outcomes.imported_program(session, program_id)
+    if not manages_school(principal, program.school_id):
+        raise forbidden(
+            "Only the Provost Office, KOK, or the program's School administrator can edit its outcomes"
+        )
+    return program
+
+
+@router.post(
+    "/programs/{program_id}/outcomes", response_model=ProgramDetailOut, status_code=status.HTTP_201_CREATED
+)
+async def add_outcome(program_id: uuid.UUID, body: OutcomeTextIn, principal: CurrentUser, session: DbSession):
+    program = await _editable_program(session, principal, program_id)
+    return ProgramDetailOut.of(await program_outcomes.add(session, program, body.text))
+
+
+@router.patch("/programs/{program_id}/outcomes/{number}", response_model=ProgramDetailOut)
+async def edit_outcome(
+    program_id: uuid.UUID, number: int, body: OutcomeTextIn, principal: CurrentUser, session: DbSession
+):
+    program = await _editable_program(session, principal, program_id)
+    return ProgramDetailOut.of(await program_outcomes.edit(session, program, number, body.text))
+
+
+@router.delete("/programs/{program_id}/outcomes/{number}", response_model=ProgramDetailOut)
+async def delete_outcome(program_id: uuid.UUID, number: int, principal: CurrentUser, session: DbSession):
+    """Removes the outcome and the links earlier checks made to it; the outcomes after it move up one number."""
+    program = await _editable_program(session, principal, program_id)
+    return ProgramDetailOut.of(await program_outcomes.remove(session, program, number))
+
+
+@router.delete("/programs/{program_id}/outcome-edits", response_model=ProgramDetailOut)
+async def restore_outcomes(program_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+    """Lets the next import-programs run replace the outcomes with the site's again."""
+    program = await _editable_program(session, principal, program_id)
+    return ProgramDetailOut.of(await program_outcomes.restore_from_site(session, program))

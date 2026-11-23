@@ -141,3 +141,98 @@ async def test_program_detail_api(ref, client_for):
         },
     }
     assert [d["is_profile"] for d in body["disciplines"]] == [False, True]
+
+
+async def _imported_id(code: str = "6B04103"):
+    async with pg.session_scope() as session:
+        await _economics(session)
+        await pi.import_programs(session, [site_program()])
+        return await session.scalar(sa.select(Program.id).where(Program.code == code))
+
+
+async def test_outcomes_are_corrected_by_hand_and_survive_an_import(ref, client_for):
+    program_id = await _imported_id()
+    kok = client_for(ref["users"]["kok"])
+
+    fixed = await kok.patch(
+        f"/programs/{program_id}/outcomes/2",
+        json={"text": {"ru": "  Готовит   отчётность. ", "kk": "", "en": "x"}},
+    )
+    assert fixed.status_code == 200, fixed.text
+    body = fixed.json()
+    assert body["outcomes"][1]["text"] == {
+        "ru": "Готовит отчётность.",
+        "en": "x",
+    }  # trimmed, empty kk dropped
+    assert body["outcomes_edited_at"]
+
+    added = await kok.post(f"/programs/{program_id}/outcomes", json={"text": {"en": "Third."}})
+    assert added.status_code == 201 and [o["number"] for o in added.json()["outcomes"]] == [1, 2, 3]
+
+    # The site is imported again: the hand-edited outcomes stay, the rest of the program is refreshed.
+    async with pg.session_scope() as session:
+        report = await pi.import_programs(session, [site_program()])
+    assert report.outcomes_kept == ["6B04103"] and report.outcomes == 0
+    got = (await kok.get(f"/programs/{program_id}")).json()
+    assert [o["text"].get("en") for o in got["outcomes"]] == ["Applies analytical tools.", "x", "Third."]
+
+    # Restoring lets the next import bring the site's text back.
+    restored = await kok.delete(f"/programs/{program_id}/outcome-edits")
+    assert restored.status_code == 200 and restored.json()["outcomes_edited_at"] is None
+    async with pg.session_scope() as session:
+        report = await pi.import_programs(session, [site_program()])
+    assert report.outcomes_kept == [] and report.outcomes == 2
+    got = (await kok.get(f"/programs/{program_id}")).json()
+    assert [o["number"] for o in got["outcomes"]] == [1, 2]
+
+
+async def test_deleting_an_outcome_renumbers_the_rest_and_keeps_their_ids(ref, client_for):
+    program_id = await _imported_id()
+    kok = client_for(ref["users"]["kok"])
+    await kok.post(f"/programs/{program_id}/outcomes", json={"text": {"en": "Third."}})
+    async with pg.session_scope() as session:
+        ids = {o.number: o.id for o in (await session.get(Program, program_id)).outcomes}
+
+    done = await kok.delete(f"/programs/{program_id}/outcomes/1")
+    assert done.status_code == 200, done.text
+    assert [(o["number"], o["text"]["en"]) for o in done.json()["outcomes"]] == [
+        (1, "Prepares IFRS statements."),
+        (2, "Third."),
+    ]
+    async with pg.session_scope() as session:
+        now = {o.number: o.id for o in (await session.get(Program, program_id)).outcomes}
+    assert now == {1: ids[2], 2: ids[3]}
+    assert (await kok.delete(f"/programs/{program_id}/outcomes/9")).status_code == 404
+
+
+async def test_outcome_edits_need_text_and_the_right_role(ref, client_for):
+    program_id = await _imported_id()
+    kok = client_for(ref["users"]["kok"])
+    assert (
+        await kok.patch(f"/programs/{program_id}/outcomes/1", json={"text": {"en": "  "}})
+    ).status_code == 422
+    assert (
+        await kok.patch(f"/programs/{program_id}/outcomes/1", json={"text": {"fr": "x"}})
+    ).status_code == 422
+
+    prof = client_for(ref["users"]["shalkar"])
+    assert (
+        await prof.post(f"/programs/{program_id}/outcomes", json={"text": {"en": "x"}})
+    ).status_code == 403
+    assert (await prof.delete(f"/programs/{program_id}/outcomes/1")).status_code == 403
+    assert (await prof.get("/alignment/overview", params={"semester": "Fall 2026"})).status_code == 403
+
+
+async def test_university_overview_lists_every_programs_coverage(ref, client_for):
+    await _imported_id()
+    kok = client_for(ref["users"]["kok"])
+    got = await kok.get("/alignment/overview", params={"semester": "Fall 2026"})
+    assert got.status_code == 200, got.text
+    body = got.json()
+    rows = [
+        (s["school_name"], p["program"]["code"], p["outcome_count"], p["covered"])
+        for s in body["schools"]
+        for p in s["programs"]
+    ]
+    assert ("Школа экономики и менеджмента", "6B04103", 2, 0) in rows
+    assert body["checked"] == 0

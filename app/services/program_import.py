@@ -151,6 +151,9 @@ class ImportReport:
     updated: list[str] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)  # (code or slug, reason)
     school_inferred: list[tuple[str, str]] = field(default_factory=list)  # (code, School slug)
+    outcomes_kept: list[str] = field(
+        default_factory=list
+    )  # codes whose outcomes were edited by hand: not touched
     outcomes: int = 0
     disciplines: int = 0
 
@@ -224,14 +227,19 @@ async def import_programs(
         program.titles = p.titles
         program.goal = p.goal or None
         program.imported_at = now
-        _sync_rows(program.outcomes, p.outcomes, lambda n, t: ProgramOutcome(number=n, text=t), _set_outcome)
+        if program.outcomes_edited_at is None:
+            _sync_rows(
+                program.outcomes, p.outcomes, lambda n, t: ProgramOutcome(number=n, text=t), _set_outcome
+            )
+            report.outcomes += len(p.outcomes)
+        else:
+            report.outcomes_kept.append(p.code)
         _sync_rows(
             program.disciplines,
             p.disciplines,
             lambda n, v: ProgramDiscipline(number=n, name=v[0], is_profile=v[1]),
             _set_discipline,
         )
-        report.outcomes += len(p.outcomes)
         report.disciplines += len(p.disciplines)
     await session.flush()
     return report

@@ -72,6 +72,8 @@ class Program(UUIDPk, Base):
     titles: Mapped[dict | None] = mapped_column(sa.JSON)  # {"ru": ..., "kk": ..., "en": ...}
     goal: Mapped[dict | None] = mapped_column(sa.JSON)  # the program's goal, same shape
     imported_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # Set when someone corrected the outcomes by hand (the site has mistakes): a later import then leaves them alone.
+    outcomes_edited_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
     outcomes: Mapped[list["ProgramOutcome"]] = relationship(
         order_by="ProgramOutcome.number", cascade="all, delete-orphan", lazy="selectin"

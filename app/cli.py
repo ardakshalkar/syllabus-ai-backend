@@ -342,6 +342,8 @@ async def _import_programs(codes: list[str], dry_run: bool) -> None:
         else f"{head} {len(report.created)}, updated {len(report.updated)}"
     )
     print(f"  {report.outcomes} learning outcomes, {report.disciplines} disciplines")
+    if report.outcomes_kept:
+        print(f"  outcomes edited by hand, left as they are: {', '.join(report.outcomes_kept)}")
     for code, school in report.school_inferred:
         print(f"  {code}: the site gives no School; filed under {school} (same field of study)")
     for code, reason in report.skipped:
