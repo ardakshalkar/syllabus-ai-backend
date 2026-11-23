@@ -76,6 +76,10 @@ WRITE: dict[tuple[str, str], str] = {
     ("DELETE", "/study-plans/{plan_id}"): "delete_draft_study_plan",
     ("POST", "/study-plans/import"): "import_study_plans",
     ("PUT", "/courses/{course_id}/programs"): "set_course_programs",
+    (
+        "POST",
+        "/versions/{version_id}/external-check",
+    ): "submit_external_check",  # free: the persons own AI judged
     ("POST", "/syllabi/{syllabus_id}/comments"): "comment_on_syllabus",
     ("POST", "/notifications/{notification_id}/read"): "mark_notification_read",
 }

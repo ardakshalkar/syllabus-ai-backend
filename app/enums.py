@@ -80,6 +80,9 @@ class Trigger(StrEnum):
     professor_manual = "Professor manual check"
     scheduled_scan = "Scheduled scan"
     upload = "Upload"
+    external_ai = (
+        "External AI"  # a persons own AI (Claude, ChatGPT) judged it, see app/services/external_checks.py
+    )
 
 
 class RunStatus(StrEnum):
