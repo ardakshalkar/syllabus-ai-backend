@@ -90,7 +90,7 @@ async def test_metadata_says_where_everything_is(anon):
     assert meta["issuer"] == "http://test"
     assert meta["token_endpoint"] == "http://test/api/v1/oauth/token"
     assert meta["code_challenge_methods_supported"] == ["S256"]
-    assert meta["scopes_supported"] == ["mcp:read", "mcp:write", "mcp:full"]
+    assert meta["scopes_supported"] == ["mcp:read", "mcp:write"]
 
 
 async def test_the_whole_flow_gives_the_user_their_own_access(ref, client_for, anon):
@@ -118,31 +118,55 @@ async def test_a_read_token_cannot_change_anything_and_a_write_token_can(ref, cl
     await writer.aclose()
 
 
-async def test_the_scope_is_decided_by_the_people_not_the_app(ref, client_for, anon):
-    """The app asked for full access; a School administrator may not give it, the Provost Office may."""
+async def test_the_person_may_give_less_than_asked_but_never_more(ref, client_for, anon):
+    provost = client_for(ref["users"]["provost"])
     client_id = await _register(anon)
-    request_id = await _request(anon, client_id, "mcp:full")
-    school_admin = client_for(ref["users"]["admin.digital"])
-    view = (await school_admin.get(f"/oauth/requests/{request_id}")).json()
-    assert view["requested_scope"] == "mcp:full" and view["default_scope"] == "mcp:write"
+    request_id = await _request(anon, client_id, "mcp:write")
+    view = (await provost.get(f"/oauth/requests/{request_id}")).json()
+    assert view["requested_scope"] == "mcp:write" and view["default_scope"] == "mcp:write"
     assert view["allowed_scopes"] == ["mcp:read", "mcp:write"]
     assert view["client_name"] == "Claude" and view["redirect_host"] == "claude.ai"
-    refused = await school_admin.post(f"/oauth/requests/{request_id}/approve", json={"scope": "mcp:full"})
-    assert refused.status_code == 403
-    provost = client_for(ref["users"]["provost"])
-    assert (await provost.get(f"/oauth/requests/{request_id}")).json()["allowed_scopes"][-1] == "mcp:full"
-    approved = await provost.post(f"/oauth/requests/{request_id}/approve", json={"scope": "mcp:full"})
+    approved = await provost.post(f"/oauth/requests/{request_id}/approve", json={"scope": "mcp:read"})
     assert approved.status_code == 200
-    # a person can also give less than was asked for, but never more
-    client_id = await _register(anon)
+    tokens = await _tokens(anon, client_id, _query(approved.json()["redirect_url"])["code"])
+    assert tokens.json()["scope"] == "mcp:read"
     request_id = await _request(anon, client_id, "mcp:read")
     wider = await provost.post(f"/oauth/requests/{request_id}/approve", json={"scope": "mcp:write"})
     assert wider.status_code == 400
 
 
+async def test_there_is_no_scope_for_paid_or_outgoing_actions(ref, client_for, anon):
+    """Starting AI checks and e-mailing reports are not on offer: not as a scope, not as an endpoint."""
+    client_id = await _register(anon)
+    response = await anon.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": REDIRECT,
+            "code_challenge": _challenge(),
+            "code_challenge_method": "S256",
+            "scope": "mcp:full",
+        },
+    )
+    assert _query(response.headers["location"])["error"] == "invalid_scope"
+    provost = client_for(ref["users"]["provost"])
+    app = _bearer(await _connect(anon, provost, "mcp:write"), anon)
+    for method, path in (
+        ("POST", "/sessions"),
+        ("POST", "/analysis/report/send"),
+        (
+            "POST",
+            f"/versions/{ref['courses']['ml'].id}/runs",
+        ),
+    ):
+        assert (await app.request(method, path, json={})).status_code == 403, path
+    await app.aclose()
+
+
 async def test_a_connected_app_reaches_only_what_its_scope_lists(ref, client_for, anon):
     provost = client_for(ref["users"]["provost"])
-    app = _bearer(await _connect(anon, provost, "mcp:full", "mcp:full"), anon)
+    app = _bearer(await _connect(anon, provost, "mcp:write"), anon)
     assert (
         await app.get("/admin/users")
     ).status_code == 403  # not on any scope, though a Provost user is no admin
@@ -281,7 +305,7 @@ async def test_taking_a_role_away_narrows_a_connection_at_once(ref, client_for, 
     from app.models import User
 
     provost = client_for(ref["users"]["provost"])
-    app = _bearer(await _connect(anon, provost, "mcp:full", "mcp:full"), anon)
+    app = _bearer(await _connect(anon, provost, "mcp:write"), anon)
     assert (await app.get("/study-plans")).status_code == 200
     async with pg.session_scope() as session:
         user = await session.get(User, ref["users"]["provost"].id)
@@ -291,15 +315,14 @@ async def test_taking_a_role_away_narrows_a_connection_at_once(ref, client_for, 
 
 
 def test_scope_helpers():
-    assert scopes.highest(["mcp:read", "mcp:full", "other"]) == "mcp:full"
+    assert scopes.highest(["mcp:read", "mcp:write", "other"]) == "mcp:write"
     assert scopes.highest(["other"]) is None
     assert scopes.allowed_tiers({Role.professor}) == ["read", "write"]
-    assert scopes.allowed_tiers({Role.provost}) == ["read", "write", "full"]
-    assert scopes.clip("mcp:full", {Role.school_admin}) == "mcp:write"
+    assert scopes.clip("mcp:full", {Role.school_admin}) == "mcp:read"  # a scope we no longer know is lowered
     assert scopes.permits("mcp:read", "GET", "/syllabi/{syllabus_id}")
     assert not scopes.permits("mcp:read", "POST", "/study-plans")
     assert scopes.permits("mcp:write", "POST", "/study-plans")
     assert not scopes.permits("mcp:write", "POST", "/analysis/report/send")
-    assert scopes.permits("mcp:full", "POST", "/analysis/report/send")
-    assert not scopes.permits("mcp:full", "GET", "/admin/users")
+    assert not scopes.permits("mcp:write", "GET", "/admin/users")
+    assert not scopes.permits("mcp:full", "GET", "/me")
     assert not scopes.permits("garbage", "GET", "/me")

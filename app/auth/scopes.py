@@ -8,15 +8,17 @@ cannot drift apart.
 
 - mcp:read:  look things up. Nothing is changed and nothing costs money.
 - mcp:write: also change plans, set a course's programs, comment, mark notifications read.
-- mcp:full:  also start AI checks (they cost money), move a syllabus through approval, email the report to the
-             Provost Office.
+
+There is deliberately no scope for anything that costs money or goes out of the university: starting the checker's
+AI runs, moving a syllabus through approval, e-mailing the report. People do those on the screens. A person who wants
+a syllabus judged by an AI uses their own (Claude, ChatGPT) on the text and the rubric the read tools give.
 
 The user's own role still applies on top: a scope never gives more than the user could do on the screens.
 """
 
 from app.enums import Role
 
-TIERS = ("read", "write", "full")
+TIERS = ("read", "write")
 SCOPE_PREFIX = "mcp:"
 SCOPES = tuple(SCOPE_PREFIX + t for t in TIERS)
 
@@ -39,6 +41,7 @@ READ: dict[tuple[str, str], str] = {
     ("GET", "/syllabi/{syllabus_id}/activity"): "get_syllabus_activity",
     ("GET", "/versions/compare"): "compare_versions",
     ("GET", "/versions/{version_id}/runs"): "list_check_runs",
+    ("GET", "/versions/{version_id}/text"): "get_syllabus_text",
     ("GET", "/versions/{version_id}/runs/latest"): "get_latest_check",
     ("GET", "/runs/{run_id}"): "get_check_run",
     ("GET", "/alignment/programs/{program_id}"): "get_program_coverage",
@@ -77,26 +80,12 @@ WRITE: dict[tuple[str, str], str] = {
     ("POST", "/notifications/{notification_id}/read"): "mark_notification_read",
 }
 
-FULL: dict[tuple[str, str], str] = {
-    ("POST", "/sessions"): "start_check_session",  # spends money: every syllabus in it is an AI check
-    ("POST", "/sessions/{session_id}/pause"): "pause_check_session",
-    ("POST", "/sessions/{session_id}/resume"): "resume_check_session",
-    ("POST", "/sessions/{session_id}/cancel"): "cancel_check_session",
-    ("POST", "/versions/{version_id}/runs"): "run_check",  # spends money
-    ("POST", "/syllabi/{syllabus_id}/transitions"): "move_syllabus_stage",
-    ("POST", "/analysis/report/send"): "send_review_report",  # emails the Provost Office
-}
-
 # Prefixes that no tier may ever reach (checked by a test against the lists above).
 NEVER = ("/admin", "/auth", "/oauth", "/drive", "/health", "/precheck", "/drafts", "/proposals")
 
 # Prefixes no scope may ever reach (a test checks the lists above against them).
 # Every other route (the sign-in, the OAuth screens that manage connections, ...) is refused for a connected app
 # because it is simply not listed.
-
-# Who may hand out which scope. Reading and writing are limited by the user's own role at each endpoint; the
-# money-spending and e-mailing scope is kept to the people who run checks for the university.
-FULL_ROLES = frozenset({Role.admin, Role.provost, Role.kok})
 
 
 def scope_of(tier: str) -> str:
@@ -117,14 +106,16 @@ def highest(scopes: list[str]) -> str | None:
 
 
 def allowed_tiers(roles: set[Role]) -> list[str]:
-    return list(TIERS) if roles & FULL_ROLES else ["read", "write"]
+    """Every user may give either scope; what an endpoint lets them do is still decided by their role there."""
+    return list(TIERS)
 
 
 def clip(scope: str, roles: set[Role]) -> str:
-    """The scope, lowered to what the user's roles allow now (a role taken away after the connection)."""
+    """The scope, lowered to what the user's roles allow now. A scope we do not know (one a later version
+    retired) becomes read."""
     tier = tier_of(scope) or "read"
     allowed = allowed_tiers(roles)
-    return scope_of(tier if tier in allowed else allowed[-1])
+    return scope_of(tier if tier in allowed else "read")
 
 
 def permits(scope: str, method: str, route_path: str) -> bool:
@@ -135,6 +126,4 @@ def permits(scope: str, method: str, route_path: str) -> bool:
     key = (method.upper(), route_path)
     if key in READ:
         return True
-    if tier in ("write", "full") and key in WRITE:
-        return True
-    return tier == "full" and key in FULL
+    return tier == "write" and key in WRITE

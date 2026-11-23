@@ -4,8 +4,8 @@ Every tool is one endpoint, named by hand below. Tiers are cumulative:
 
 - read:  look things up. Nothing is changed and nothing costs money.
 - write: change plans, set a course's programs, comment, mark notifications read.
-- full:  also start AI checks (they cost money), move a syllabus through approval, email the report to the
-         Provost Office.
+
+Nothing that costs money or leaves the university is a tool (no AI checks, no approval moves, no e-mailed reports).
 
 Never exposed, in any tier: /admin (users, roles, passwords, catalog deletes), /auth, /drive (credentials, sync, setup),
 /health, file and PDF/CSV downloads, uploads, the syllabus-improvement wizard and its proposals, private pre-checks,
@@ -18,19 +18,17 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.auth.scopes import FULL, NEVER, READ, TIERS, WRITE
+from app.auth.scopes import NEVER, READ, TIERS, WRITE
 
-__all__ = ["FULL", "NEVER", "READ", "TIERS", "WRITE"]  # the lists live in app/auth/scopes.py
+__all__ = ["NEVER", "READ", "TIERS", "WRITE"]  # the lists live in app/auth/scopes.py
 
 
 def allowed(tier: str) -> dict[tuple[str, str], str]:
     if tier not in TIERS:
         raise ValueError(f"tier must be one of {', '.join(TIERS)}")
     chosen = dict(READ)
-    if tier in ("write", "full"):
+    if tier == "write":
         chosen |= WRITE
-    if tier == "full":
-        chosen |= FULL
     return chosen
 
 
@@ -110,7 +108,7 @@ def build_tools(
     """Tool definitions for the endpoints of `tier`. `include`/`exclude` are tool names; an included name must be
     one this module knows (the lists above), so nothing outside them can be switched on."""
     chosen = allowed(tier)
-    known = {**READ, **WRITE, **FULL}
+    known = {**READ, **WRITE}
     unknown = set(include) - set(known.values())
     if unknown:
         raise ValueError(f"unknown tool names to include: {', '.join(sorted(unknown))}")
@@ -175,8 +173,7 @@ def build_tools(
                 query_params=query_params,
                 has_body=body is not None,
                 read_only=method == "GET" or name in ("estimate_check_cost", "find_course_in_plans"),
-                destructive=method == "DELETE"
-                or name in ("start_check_session", "run_check", "send_review_report", "import_study_plans"),
+                destructive=method == "DELETE" or name == "import_study_plans",
                 idempotent=method in ("GET", "PUT", "DELETE"),
             )
         )

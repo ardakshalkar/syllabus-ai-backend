@@ -19,7 +19,7 @@ uv run --extra mcp python -m mcp_server            # stdio; prints "N tools, tie
 | `SYLLABUS_API_URL` | The API, default `http://localhost:8080/api/v1`. |
 | `SYLLABUS_API_TOKEN` | A bearer token (in development: `stub:someone@demo.narxoz.kz`), **or** |
 | `SYLLABUS_API_EMAIL` + `SYLLABUS_API_PASSWORD` | Sign in with a password. The session is renewed when it expires. |
-| `MCP_TIER` | `read` (default), `write`, `full`. |
+| `MCP_TIER` | `read` (default) or `write`. |
 | `MCP_INCLUDE`, `MCP_EXCLUDE` | Comma-separated tool names to add from outside the tier, or to drop from it. |
 | `SYLLABUS_OPENAPI_FILE` | Read the API description from a file instead of `GET <host>/openapi.json`. |
 
@@ -44,11 +44,11 @@ Claude Desktop (`claude_desktop_config.json`):
 
 ## Tiers
 
-Cumulative: `write` includes `read`; `full` includes both.
+Cumulative: `write` includes `read`.
 
-**read** (40 tools): nothing changes, nothing costs money.
+**read** (41 tools): nothing changes, nothing costs money.
 - Context: `get_me`, `list_schools`, `list_programs`, `get_program`, `list_courses`, `list_professors`, `list_semesters`, `get_rubric`, `get_collection_status`, `list_school_folders`, `get_folder_contents`
-- Syllabi and checks: `list_syllabi`, `get_syllabus`, `list_syllabus_versions`, `get_syllabus_activity`, `compare_versions`, `list_check_runs`, `get_latest_check`, `get_check_run`
+- Syllabi and checks: `list_syllabi`, `get_syllabus`, `get_syllabus_text` (the text of a version, for judging it with your own AI), `list_syllabus_versions`, `get_syllabus_activity`, `compare_versions`, `list_check_runs`, `get_latest_check`, `get_check_run`
 - Alignment: `get_course_programs`, `get_syllabus_alignment`, `get_program_coverage`, `get_school_coverage`
 - Analysis: `get_overview`, `get_analysis`, `get_review_report`, `list_sent_reports`, `get_frequent_issues`, `get_heatmap`, `get_runs_by_trigger`
 - Check sessions: `list_check_sessions`, `get_check_session`, `get_check_session_items`, `estimate_check_cost` (a price quote only)
@@ -57,13 +57,24 @@ Cumulative: `write` includes `read`; `full` includes both.
 
 **write** (+10): `create_study_plan`, `update_study_plan`, `replace_study_plan_courses`, `activate_study_plan`, `archive_study_plan`, `delete_draft_study_plan`, `import_study_plans`, `set_course_programs`, `comment_on_syllabus`, `mark_notification_read`.
 
-**full** (+7): `start_check_session` and `run_check` (**spend money**: each syllabus is an AI check), `pause_check_session`, `resume_check_session`, `cancel_check_session`, `move_syllabus_stage` (approval workflow), `send_review_report` (**emails the Provost Office**).
+There is no tool that costs money or sends anything out: no AI checks, no approval moves, no e-mailed reports. Those stay on the screens.
 
 Tool descriptions say when a call changes data; the tools carry read-only / destructive hints so a client can ask before running them.
 
+## Judging a syllabus with your own AI
+
+The checker's own AI runs cost money, so they are not offered. A person can instead let their own Claude or ChatGPT
+(on their own subscription) do the judging: it reads the rubric and the syllabus through these tools, and the person
+reads the answer. Try: *"Take the latest syllabus of Machine Learning and judge it against the rubric. Quote the text for
+each criterion, and say which are missing."* The model calls `get_rubric` (criteria with guidance), `get_syllabus` and
+`get_syllabus_text`. Post the result to the syllabus only if you ask it to (`comment_on_syllabus`, write tier).
+
+Know that the syllabus text then goes to the company behind that AI, under the person's own account and terms. A person
+sees only the syllabi their role lets them see.
+
 ## Left out on purpose
 
-Not reachable in any tier, even with `MCP_INCLUDE` (a test keeps this true): everything under `/admin` (users, roles, passwords, catalog
+Not reachable in any tier, even with `MCP_INCLUDE` (a test keeps this true): starting AI checks, approval moves and e-mailing the report, and everything under `/admin` (users, roles, passwords, catalog
 renames and deletes, check mode, AI request traces), `/auth`, `/drive` (credentials, sync, setup), `/health`, file and PDF/CSV
 downloads, uploads, the syllabus-improvement wizard and its proposals, private pre-checks, and creating or deleting Schools, programs,
 courses, folders and semesters. Those are administration or carry files and secrets, and are better done on the screens.

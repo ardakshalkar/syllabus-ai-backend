@@ -27,7 +27,10 @@ let that path through and set `OAUTH_ISSUER` to the public address (`https://syl
 |---|---|---|
 | `mcp:read` | The read endpoints: nothing changes, nothing costs money. | Every user |
 | `mcp:write` | + change study plans, set a course's programs, comment, mark notifications read. | Every user (each endpoint still checks the role) |
-| `mcp:full` | + start AI checks (they cost money), move a syllabus through approval, e-mail the review report. | Administrator, Provost Office, KOK |
+
+There is no scope for starting the checker's AI runs (they cost money), moving a syllabus through approval or e-mailing the
+report. A person who wants a syllabus judged by an AI uses their own Claude or ChatGPT on the text and the rubric the read
+tools give (`get_syllabus_text`, `get_rubric`).
 
 The lists are `app/auth/scopes.py`; the MCP server builds its tools from the same lists. A token may call **only** what
 its scope lists. Every other endpoint, including `/admin`, `/auth`, `/drive`, uploads and downloads, and the `/oauth`
@@ -35,8 +38,7 @@ screens themselves, answers 403 to a connected app, whatever the user's role is.
 connection on its own.
 
 The person's role is checked on top, at every call, not once when the token was made: taking a role away, or switching
-the account off, narrows or ends the connection at once. The app may ask for more than a person can give; the screen
-offers what their role allows, defaulting to what was asked for lowered to that.
+the account off, narrows or ends the connection at once. The person may give less than the app asked for, never more.
 
 ## For the person
 
