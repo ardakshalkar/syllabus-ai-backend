@@ -44,6 +44,8 @@ class ProgramOut(Schema):
     site_url: str | None = None
     outcome_count: int = 0
     imported_at: datetime | None = None
+    # Set when the outcomes were corrected by hand; an import leaves them as they are.
+    outcomes_edited_at: datetime | None = None
 
     @classmethod
     def of(cls, program) -> "ProgramOut":
@@ -62,6 +64,7 @@ class ProgramOut(Schema):
             site_url=page_url(program.site_slug) if program.site_slug else None,
             outcome_count=len(program.outcomes),
             imported_at=program.imported_at,
+            outcomes_edited_at=program.outcomes_edited_at,
         )
 
 

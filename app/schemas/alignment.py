@@ -106,4 +106,26 @@ class SchoolCoverageOut(Schema):
     programs: list[SchoolCoverageRow]
 
 
+class UniversitySchoolRow(Schema):
+    school_id: uuid.UUID
+    school_name: str
+    checked: int  # syllabi of the School with a completed check this semester
+    aligned: int  # of them, those compared with programs
+    programs: list[SchoolCoverageRow]
+
+
+class UniversityCoverageOut(Schema):
+    """The Provost Office's view: every School's programs, with how many of their outcomes checked courses cover."""
+
+    semester: str
+    checked: int
+    aligned: int
+    schools: list[UniversitySchoolRow]
+
+
+class OutcomeTextIn(Schema):
+    # The outcome in ru / kk / en; at least one language, the others may stay empty.
+    text: dict[str, str] = Field(max_length=3)
+
+
 CourseOutcomeLinks.model_rebuild()

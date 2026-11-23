@@ -18,6 +18,7 @@ from app.models import (
     Program,
     ProgramBasis,
     ProgramOutcome,
+    School,
     Syllabus,
     SyllabusVersion,
 )
@@ -132,6 +133,7 @@ class CheckedSyllabus:
     course_id: uuid.UUID
     course_name: str
     run_id: uuid.UUID
+    school_id: uuid.UUID
     basis: str | None
     program_ids: list[str]
 
@@ -146,6 +148,7 @@ async def checked_syllabi(
             Course.id.label("course_id"),
             Course.name.label("course_name"),
             AssessmentRun.id.label("run_id"),
+            Program.school_id.label("school_id"),
             AssessmentRun.program_basis,
             AssessmentRun.program_ids,
             sa.func.row_number()
@@ -174,7 +177,13 @@ async def checked_syllabi(
     rows = await session.execute(sa.select(sub).where(sub.c.rank == 1).order_by(sub.c.course_name))
     return [
         CheckedSyllabus(
-            r.syllabus_id, r.course_id, r.course_name, r.run_id, r.program_basis, r.program_ids or []
+            r.syllabus_id,
+            r.course_id,
+            r.course_name,
+            r.run_id,
+            r.school_id,
+            r.program_basis,
+            r.program_ids or [],
         )
         for r in rows
     ]
@@ -236,15 +245,12 @@ async def program_coverage(session: AsyncSession, program: Program, semester: st
     )
 
 
-async def school_coverage(
-    session: AsyncSession, school_id: uuid.UUID, semester: str
-) -> out.SchoolCoverageOut:
-    programs = await program_links.school_programs(session, school_id)
-    # Courses of other Schools can serve these programs too (service courses), so every checked syllabus counts.
-    checked = await checked_syllabi(session, semester)
-    own = await checked_syllabi(session, semester, school_id)
-    by_run = {s.run_id: s for s in checked}
-    links = await _links_for(session, list(by_run), [p.id for p in programs])
+def _coverage_rows(
+    programs: list[Program],
+    checked: list[CheckedSyllabus],
+    links: list[tuple[OutcomeLink, ProgramOutcome]],
+    by_run: dict[uuid.UUID, CheckedSyllabus],
+) -> list[out.SchoolCoverageRow]:
     covered: dict[uuid.UUID, set[int]] = defaultdict(set)
     linked: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
     for link, outcome in links:
@@ -263,10 +269,53 @@ async def school_coverage(
                 courses_known=known,
             )
         )
+    return rows
+
+
+async def school_coverage(
+    session: AsyncSession, school_id: uuid.UUID, semester: str
+) -> out.SchoolCoverageOut:
+    programs = await program_links.school_programs(session, school_id)
+    # Courses of other Schools can serve these programs too (service courses), so every checked syllabus counts.
+    checked = await checked_syllabi(session, semester)
+    own = [s for s in checked if s.school_id == school_id]
+    by_run = {s.run_id: s for s in checked}
+    links = await _links_for(session, list(by_run), [p.id for p in programs])
     return out.SchoolCoverageOut(
         school_id=school_id,
         semester=semester,
         checked=len(own),
         aligned=sum(1 for s in own if s.basis),
-        programs=rows,
+        programs=_coverage_rows(programs, checked, links, by_run),
+    )
+
+
+async def university_coverage(session: AsyncSession, semester: str) -> out.UniversityCoverageOut:
+    schools = list(await session.scalars(sa.select(School).order_by(School.name)))
+    programs = list(
+        await session.scalars(sa.select(Program).where(Program.code.is_not(None)).order_by(Program.code))
+    )
+    checked = await checked_syllabi(session, semester)
+    by_run = {s.run_id: s for s in checked}
+    links = await _links_for(session, list(by_run), [p.id for p in programs])
+    rows = _coverage_rows(programs, checked, links, by_run)
+    shown = []
+    for school in schools:
+        own = [s for s in checked if s.school_id == school.id]
+        mine = [r for r, p in zip(rows, programs, strict=True) if p.school_id == school.id]
+        if mine or own:
+            shown.append(
+                out.UniversitySchoolRow(
+                    school_id=school.id,
+                    school_name=school.name,
+                    checked=len(own),
+                    aligned=sum(1 for s in own if s.basis),
+                    programs=mine,
+                )
+            )
+    return out.UniversityCoverageOut(
+        semester=semester,
+        checked=len(checked),
+        aligned=sum(1 for s in checked if s.basis),
+        schools=shown,
     )
