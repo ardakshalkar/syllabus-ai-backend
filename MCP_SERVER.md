@@ -26,7 +26,30 @@ uv run --extra mcp python -m mcp_server            # stdio; prints "N tools, tie
 Flags `--api-url --tier --include --exclude --spec` do the same. `--transport http --port 8765` serves over streamable HTTP
 instead of stdio; that endpoint has **no sign-in of its own**, so keep it on localhost or behind your own proxy.
 
-## Connect Claude
+## Serve it to people (HTTP, one sign-in per person)
+
+This is the way for everyone: no shared account, no password in a config file. Each person signs in on the site and
+approves the connection (CONNECTED_APPS.md); the server then calls the API with that person's own token.
+
+```powershell
+$env:MCP_PUBLIC_URL = "https://syllabus.narxoz.kz"      # where people reach this server; the tools are at /mcp
+uv run --extra mcp python -m mcp_server --transport http --host 0.0.0.0 --port 8765 --api-url http://api:8080/api/v1
+# or: docker compose --profile mcp up -d
+```
+
+The proxy in front sends three paths to the right place:
+
+| Path | To |
+|---|---|
+| `/mcp` and `/.well-known/oauth-protected-resource/mcp` | this server (port 8765) |
+| `/.well-known/oauth-authorization-server` and `/api/` | the API (port 8080) |
+| everything else | the frontend |
+
+Set `OAUTH_ISSUER` on the API and `MCP_ISSUER` here to the public address if they differ from what the proxy forwards.
+What a person sees depends on the access they gave: with read access the 41 read tools, with write access all 51; a
+call is also refused by the API if their role does not allow it.
+
+## Connect Claude (one fixed user, on your own machine)
 
 Claude Code:
 ```powershell

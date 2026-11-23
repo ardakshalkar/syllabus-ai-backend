@@ -73,6 +73,15 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
 
+  # The server people connect Claude or ChatGPT to (MCP_SERVER.md). Opt in: docker compose --profile mcp up -d.
+  # Needs MCP_PUBLIC_URL (where people reach it) and, behind a proxy, MCP_ISSUER (the API's public address).
+  mcp:
+    <<: *app
+    profiles: ["mcp"]
+    command: ["python", "-m", "mcp_server", "--transport", "http", "--host", "0.0.0.0", "--port", "8765", "--api-url", "http://api:8080/api/v1"]
+    ports: ["8765:8765"]
+    depends_on: [api]
+
   worker:
     <<: *app
     # Keep -c for the ai queue in line with LLM_MAX_CONCURRENCY and what the vLLM server can take.

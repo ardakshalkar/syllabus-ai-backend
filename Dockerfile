@@ -7,7 +7,7 @@ WORKDIR /srv
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core fonts-wqy-microhei && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --extra mcp
 
 COPY . .
 RUN useradd --create-home app && mkdir -p /data && chown app /data

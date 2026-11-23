@@ -32,6 +32,7 @@ class ApiClient:
         timeout: float = 60,
     ):
         self.base_url = base_url.rstrip("/")
+        self._transport, self._timeout = transport, timeout
         self._email, self._password = email, password
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         # The sign-in sets a session cookie; the client keeps it and sends it on every call.
@@ -65,7 +66,9 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
-    async def call(self, tool: ToolDef, arguments: dict[str, Any]) -> Outcome:
+    async def call(self, tool: ToolDef, arguments: dict[str, Any], *, token: str | None = None) -> Outcome:
+        """`token`: act as the person who connected (HTTP mode), with their own access token. Without it the client
+        acts as the one user it was started with (stdio mode)."""
         arguments = dict(arguments or {})
         missing = [p for p in tool.path_params if arguments.get(p) in (None, "")]
         if missing:
@@ -75,6 +78,12 @@ class ApiClient:
             path = path.replace("{" + name + "}", quote(str(arguments[name]), safe=""))
         params = {k: v for k, v in arguments.items() if k in tool.query_params and v is not None}
         body = arguments.get("body") if tool.has_body else None
+        if token is not None:
+            response = await self._request_as(token, tool.method, path, params, body)
+            outcome = self._outcome(response)
+            if response.status_code == 401:
+                outcome.text += " The connection has ended: connect the app again."
+            return outcome
         if not self._signed_in:
             await self._sign_in()
         response = await self._request(tool.method, path, params, body)
@@ -82,6 +91,22 @@ class ApiClient:
             await self._sign_in()
             response = await self._request(tool.method, path, params, body)
         return self._outcome(response)
+
+    async def _request_as(
+        self, token: str, method: str, path: str, params: dict[str, Any], body: Any
+    ) -> httpx.Response:
+        """One call for one person: a client of its own, so no cookie or header of one person can reach another."""
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=self._timeout,
+            transport=self._transport,
+            follow_redirects=False,
+        ) as http:
+            try:
+                return await http.request(method, path, params=params or None, json=body)
+            except httpx.HTTPError as exc:
+                return httpx.Response(599, text=f"The API cannot be reached: {exc}")
 
     async def _request(self, method: str, path: str, params: dict[str, Any], body: Any) -> httpx.Response:
         try:

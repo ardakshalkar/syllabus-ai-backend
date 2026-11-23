@@ -15,9 +15,10 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.auth import oauth, scopes
+from app.auth.rbac import Principal
 from app.config import get_settings
 from app.deps import CurrentUser, DbSession
-from app.models import OAuthClient, OAuthGrant
+from app.models import OAuthClient, OAuthGrant, User
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 well_known = APIRouter(tags=["oauth"])
@@ -47,6 +48,7 @@ async def authorization_server_metadata(request: Request) -> dict:
         "token_endpoint": f"{base}/token",
         "registration_endpoint": f"{base}/register",
         "revocation_endpoint": f"{base}/revoke",
+        "introspection_endpoint": f"{base}/introspect",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
@@ -233,6 +235,28 @@ async def revoke(session: DbSession, token: Annotated[str, Form()] = "") -> Resp
     if token:
         await oauth.revoke(session, token)
     return Response(status_code=status.HTTP_200_OK)
+
+
+@router.post("/introspect", summary="Is this access token live, and for what? (RFC 7662)")
+async def introspect(session: DbSession, token: Annotated[str, Form()] = "") -> JSONResponse:
+    """For the MCP server, which takes the token from a client and must know the scope before it lists tools. No
+    sign-in: whoever holds the token already has all it gives, and an unknown or ended token only gets `active: false`."""
+    grant = await oauth.grant_for_access_token(session, token) if oauth.is_access_token(token) else None
+    user = await session.get(User, grant.user_id) if grant else None
+    if grant is None or user is None or not user.is_active:
+        return JSONResponse({"active": False}, headers=_NO_STORE)
+    client = await session.get(OAuthClient, grant.client_id)
+    return JSONResponse(
+        {
+            "active": True,
+            "scope": scopes.clip(grant.scope, Principal.of(user).roles),
+            "client_id": client.client_id if client else "",
+            "sub": str(user.id),
+            "token_type": "Bearer",
+            "exp": int(grant.access_expires_at.timestamp()),
+        },
+        headers=_NO_STORE,
+    )
 
 
 class GrantOut(BaseModel):

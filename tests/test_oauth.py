@@ -326,3 +326,18 @@ def test_scope_helpers():
     assert not scopes.permits("mcp:write", "GET", "/admin/users")
     assert not scopes.permits("mcp:full", "GET", "/me")
     assert not scopes.permits("garbage", "GET", "/me")
+
+
+async def test_introspection_tells_the_mcp_server_who_and_how_much(ref, client_for, anon):
+    provost = client_for(ref["users"]["provost"])
+    tokens = await _connect(anon, provost, "mcp:read")
+    live = (await anon.post("/oauth/introspect", data={"token": tokens["access_token"]})).json()
+    assert live["active"] and live["scope"] == "mcp:read" and live["sub"] == str(ref["users"]["provost"].id)
+    assert (await anon.post("/oauth/introspect", data={"token": "mcp_at_nope"})).json() == {"active": False}
+    assert (await anon.post("/oauth/introspect", data={"token": "stub:provost@demo.narxoz.kz"})).json() == {
+        "active": False
+    }  # only connected-app tokens are described
+    await anon.post("/oauth/revoke", data={"token": tokens["access_token"]})
+    assert (await anon.post("/oauth/introspect", data={"token": tokens["access_token"]})).json() == {
+        "active": False
+    }

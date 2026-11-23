@@ -176,3 +176,66 @@ async def test_signing_in_by_password_and_again_after_a_401(spec):
     assert not (await client.call(tools["get_me"], {})).is_error
     assert log[-3:] == ["GET /api/v1/me", "POST /api/v1/auth/login", "GET /api/v1/me"]
     await client.aclose()
+
+
+async def test_http_mode_calls_the_api_with_each_persons_own_token(spec):
+    tools = {t.name: t for t in catalog.build_tools(spec, "write")}
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.headers.get("authorization"), request.headers.get("cookie")))
+        return httpx.Response(200, json={"ok": True}, headers={"set-cookie": "session=leak; Path=/"})
+
+    client = _client(handler, email="shared@demo.narxoz.kz", password="pw")
+    await client.call(tools["get_me"], {}, token="mcp_at_anna")
+    await client.call(tools["get_me"], {}, token="mcp_at_boris")
+    assert seen == [
+        ("Bearer mcp_at_anna", None),
+        ("Bearer mcp_at_boris", None),
+    ]  # no sign-in, no shared cookie
+    await client.aclose()
+
+
+async def test_an_ended_connection_tells_the_model_to_connect_again(spec):
+    tools = {t.name: t for t in catalog.build_tools(spec, "read")}
+    client = _client(lambda r: httpx.Response(401, json={"detail": "Invalid or expired token"}))
+    out = await client.call(tools["get_me"], {}, token="mcp_at_old")
+    assert out.is_error and "connect the app again" in out.text
+
+
+async def test_the_verifier_asks_the_backend_and_remembers_for_a_moment():
+    from mcp_server.auth import BackendTokenVerifier
+
+    asked = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.content)
+        if b"mcp_at_good" in request.content:
+            return httpx.Response(
+                200,
+                json={"active": True, "scope": "mcp:read", "client_id": "c", "sub": "u", "exp": 4102444800},
+            )
+        return httpx.Response(200, json={"active": False})
+
+    verifier = BackendTokenVerifier(
+        "http://api.test/api/v1/oauth/introspect", transport=httpx.MockTransport(handler)
+    )
+    good = await verifier.verify_token("mcp_at_good")
+    assert good and good.scopes == ["mcp:read"] and good.subject == "u"
+    await verifier.verify_token("mcp_at_good")
+    assert len(asked) == 1  # the second answer came from memory
+    assert await verifier.verify_token("mcp_at_bad") is None
+
+    def down(request):
+        raise httpx.ConnectError("refused")
+
+    assert (
+        await BackendTokenVerifier("http://x/i", transport=httpx.MockTransport(down)).verify_token("t")
+        is None
+    )
+
+    def write(request):
+        return httpx.Response(200, json={"active": True, "scope": "mcp:write"})
+
+    both = await BackendTokenVerifier("http://x/i", transport=httpx.MockTransport(write)).verify_token("t")
+    assert both.scopes == ["mcp:read", "mcp:write"]

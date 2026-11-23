@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from mcp import types
 from mcp.server import Server, ServerRequestContext
+from mcp.server.auth.middleware.auth_context import get_access_token
 
-from mcp_server.catalog import ToolDef
+from mcp_server.catalog import READ, WRITE, ToolDef
 from mcp_server.client import ApiClient
 
 INSTRUCTIONS = (
@@ -35,10 +36,17 @@ def build_server(tools: list[ToolDef], client: ApiClient, *, name: str = "syllab
         for t in tools
     ]
 
+    def reachable(name: str, scopes: list[str]) -> bool:
+        """In HTTP mode a person's token decides which tools they see: writing needs the write scope."""
+        return name in READ.values() or (name in WRITE.values() and "mcp:write" in scopes)
+
     async def on_list_tools(
         ctx: ServerRequestContext, params: types.PaginatedRequestParams | None
     ) -> types.ListToolsResult:
-        return types.ListToolsResult(tools=listed)
+        access = get_access_token()
+        if access is None:  # stdio: the one user this server was started as
+            return types.ListToolsResult(tools=listed)
+        return types.ListToolsResult(tools=[t for t in listed if reachable(t.name, access.scopes)])
 
     async def on_call_tool(
         ctx: ServerRequestContext, params: types.CallToolRequestParams
@@ -48,7 +56,18 @@ def build_server(tools: list[ToolDef], client: ApiClient, *, name: str = "syllab
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=f"Unknown tool: {params.name}")], is_error=True
             )
-        outcome = await client.call(tool, params.arguments or {})
+        access = get_access_token()
+        if access is not None and not reachable(tool.name, access.scopes):
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text="Not allowed by the access you gave: connect again with write access.",
+                    )
+                ],
+                is_error=True,
+            )
+        outcome = await client.call(tool, params.arguments or {}, token=access.token if access else None)
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=outcome.text)], is_error=outcome.is_error
         )
