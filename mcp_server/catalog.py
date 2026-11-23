@@ -23,6 +23,14 @@ from app.auth.scopes import NEVER, READ, TIERS, WRITE
 __all__ = ["NEVER", "READ", "TIERS", "WRITE"]  # the lists live in app/auth/scopes.py
 
 
+# Query parameters a tool always sends, so the model is not offered them. The check results come back without the
+# translations and quote positions: a full result is 85-95 thousand characters and would be cut at MAX_TEXT.
+FIXED_QUERY: dict[str, dict[str, Any]] = {
+    "get_check_run": {"compact": True},
+    "get_latest_check": {"compact": True},
+}
+
+
 def allowed(tier: str) -> dict[tuple[str, str], str]:
     if tier not in TIERS:
         raise ValueError(f"tier must be one of {', '.join(TIERS)}")
@@ -45,6 +53,7 @@ class ToolDef:
     read_only: bool = False
     destructive: bool = False
     idempotent: bool = False
+    fixed_query: dict[str, Any] = field(default_factory=dict)
 
 
 _REF = "#/components/schemas/"
@@ -128,8 +137,9 @@ def build_tools(
         required: list[str] = []
         path_params: list[str] = []
         query_params: list[str] = []
+        fixed = FIXED_QUERY.get(name, {})
         for param in operation.get("parameters", []):
-            if param["in"] not in ("path", "query"):
+            if param["in"] not in ("path", "query") or param["name"] in fixed:
                 continue
             schema = dict(param.get("schema", {}))
             if param.get("description"):
@@ -175,6 +185,7 @@ def build_tools(
                 read_only=method == "GET" or name in ("estimate_check_cost", "find_course_in_plans"),
                 destructive=method == "DELETE" or name == "import_study_plans",
                 idempotent=method in ("GET", "PUT", "DELETE"),
+                fixed_query=dict(fixed),
             )
         )
     return tools

@@ -203,7 +203,12 @@ async def list_runs(version_id: uuid.UUID, principal: CurrentUser, session: DbSe
     return [await run_out(session, r) for r in runs]
 
 
-async def _results(session: DbSession, run: AssessmentRun) -> RunResultsOut:
+# What bulks up a finding without changing what it says: the same text in the other languages, and where the quote
+# stands in the document (the table row or paragraph around it).
+_BULK = {"translations", "evidence_context", "evidence_block"}
+
+
+async def _results(session: DbSession, run: AssessmentRun, compact: bool = False) -> RunResultsOut:
     out = RunResultsOut(**(await run_out(session, run)).model_dump())
     if run.status != RunStatus.completed:
         return out
@@ -215,12 +220,12 @@ async def _results(session: DbSession, run: AssessmentRun) -> RunResultsOut:
     out.technical = doc.technical
     out.results = [
         CriterionResultOut(
-            **r.model_dump(),
+            **(r.model_dump(exclude=_BULK) if compact else r.model_dump()),
             name=specs[r.criterion_id].name,
             principle=specs[r.criterion_id].principle,
             critical=specs[r.criterion_id].critical,
             severity=severity(r.status, specs[r.criterion_id].critical),
-            texts=specs[r.criterion_id].texts,
+            texts=None if compact else specs[r.criterion_id].texts,
         )
         for r in doc.results
     ]
@@ -231,22 +236,31 @@ async def _results(session: DbSession, run: AssessmentRun) -> RunResultsOut:
     return out
 
 
+COMPACT = Query(
+    False,
+    description="leave out the translations of each finding, where its quote stands and the reviewed texts: a result "
+    "about half the size, in the language the check wrote it",
+)
+
+
 @router.get("/versions/{version_id}/runs/latest", response_model=RunResultsOut)
-async def latest_results(version_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+async def latest_results(
+    version_id: uuid.UUID, principal: CurrentUser, session: DbSession, compact: bool = COMPACT
+):
     await _visible_version(session, principal, version_id)
     run = await checks.latest_run(session, version_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "This version has not been checked")
-    return await _results(session, run)
+    return await _results(session, run, compact)
 
 
 @router.get("/runs/{run_id}", response_model=RunResultsOut)
-async def get_run(run_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+async def get_run(run_id: uuid.UUID, principal: CurrentUser, session: DbSession, compact: bool = COMPACT):
     run = await session.get(AssessmentRun, run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     await _visible_version(session, principal, run.version_id)
-    return await _results(session, run)
+    return await _results(session, run, compact)
 
 
 @router.post("/versions/{version_id}/runs", response_model=RunOut, status_code=status.HTTP_201_CREATED)
