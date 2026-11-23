@@ -75,7 +75,7 @@ async def test_wrong_password_unknown_email_and_no_password_look_the_same(ref, a
         ("google.only@narxoz.kz", PASSWORD),
     ):
         response = await anon.post("/auth/login", json={"email": email, "password": password})
-        assert response.status_code == 401 and response.json()["detail"] == "Wrong email or password"
+        assert response.status_code == 401 and response.json()["detail"] == "Wrong email or password."
         assert "set-cookie" not in response.headers
 
 
