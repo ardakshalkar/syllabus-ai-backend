@@ -167,3 +167,16 @@ async def test_refused_account_stores_nothing(ref, client_for, monkeypatch):
     )
     assert response.status_code == 403
     assert (await lead.get(f"/syllabi/{syllabus['id']}/versions")).json() == []
+
+
+async def test_folder_name_repeats_across_semesters_but_not_within_one(ref, client_for):
+    admin = client_for(ref["users"]["admin.digital"])
+    url = f"/schools/{ref['schools']['digital'].id}/folders"
+    body = {"path": "Syllabi", "semester": "Fall 2026"}
+
+    assert (await admin.post(url, json=body)).status_code == 201
+    assert (await admin.post(url, json={**body, "semester": "Spring 2027"})).status_code == 201
+
+    again = await admin.post(url, json=body)
+    assert again.status_code == 409
+    assert "different name" in again.json()["detail"]

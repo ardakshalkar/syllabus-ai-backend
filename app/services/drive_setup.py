@@ -75,13 +75,6 @@ async def setup_shared_folder(
                     report.folders_updated_in_db += 1
             if not folders:
                 path = school.name[:300]
-                taken = await session.scalar(
-                    sa.select(UploadFolder.id).where(
-                        UploadFolder.school_id == school.id, UploadFolder.path == path
-                    )
-                )
-                if taken:  # the School's folder of another semester; paths are unique per School
-                    path = f"{school.name} · {semester}"[:300]
                 session.add(
                     UploadFolder(
                         school_id=school.id,
