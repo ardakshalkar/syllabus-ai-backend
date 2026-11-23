@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import Field
 
-from app.models import LinkSource, ProgramBasis
+from app.models import LinkOrigin, LinkSource, ProgramBasis
 from app.schemas.common import Schema
 
 
@@ -47,6 +47,7 @@ class CourseOutcomeLinks(Schema):
 class LinkOut(Schema):
     outcome: ProgramOutcomeRef
     reason: str
+    origin: LinkOrigin
 
 
 class SyllabusAlignmentOut(Schema):
@@ -64,6 +65,7 @@ class CoverageCourseOutcome(Schema):
     code: str
     text: str
     reason: str
+    origin: LinkOrigin
 
 
 class CoverageCourse(Schema):
@@ -94,6 +96,7 @@ class SchoolCoverageRow(Schema):
     degree_level: str
     outcome_count: int
     covered: int  # outcomes at least one checked course outcome contributes to
+    covered_declared: int  # of them, outcomes a syllabus itself says a course outcome serves
     courses_linked: int  # checked syllabi with at least one link to this program
     courses_known: int  # of the checked syllabi, those whose known program this is
 

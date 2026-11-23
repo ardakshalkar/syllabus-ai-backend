@@ -13,6 +13,7 @@ from app.enums import Role, RunStatus
 from app.models import (
     AssessmentRun,
     Course,
+    LinkOrigin,
     LinkSource,
     OutcomeLink,
     Program,
@@ -121,6 +122,7 @@ async def syllabus_alignment(session: AsyncSession, syllabus: Syllabus) -> out.S
                     program_id=outcome.program_id, program_code=code, number=outcome.number, text=outcome.text
                 ),
                 reason=link.reason,
+                origin=link.origin,
             )
         )
     result.course_outcomes = list(grouped.values())
@@ -223,7 +225,10 @@ async def program_coverage(session: AsyncSession, program: Program, semester: st
         course = per_outcome[outcome.number].setdefault(s.syllabus_id, _course(s, program.id))
         course.course_outcomes.append(
             out.CoverageCourseOutcome(
-                code=link.course_outcome, text=link.course_outcome_text, reason=link.reason
+                code=link.course_outcome,
+                text=link.course_outcome_text,
+                reason=link.reason,
+                origin=link.origin,
             )
         )
     compared = [s for s in checked if str(program.id) in s.program_ids]
@@ -252,9 +257,12 @@ def _coverage_rows(
     by_run: dict[uuid.UUID, CheckedSyllabus],
 ) -> list[out.SchoolCoverageRow]:
     covered: dict[uuid.UUID, set[int]] = defaultdict(set)
+    covered_declared: dict[uuid.UUID, set[int]] = defaultdict(set)
     linked: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
     for link, outcome in links:
         covered[outcome.program_id].add(outcome.number)
+        if link.origin == LinkOrigin.declared:
+            covered_declared[outcome.program_id].add(outcome.number)
         linked[outcome.program_id].add(by_run[link.run_id].syllabus_id)
     rows = []
     for p in programs:
@@ -265,6 +273,7 @@ def _coverage_rows(
                 degree_level=p.degree_level,
                 outcome_count=len(p.outcomes),
                 covered=len(covered[p.id]),
+                covered_declared=len(covered_declared[p.id]),
                 courses_linked=len(linked[p.id]),
                 courses_known=known,
             )

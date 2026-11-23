@@ -1,4 +1,4 @@
-from app.models.alignment import CourseProgram, LinkSource, OutcomeLink, ProgramBasis
+from app.models.alignment import CourseProgram, LinkOrigin, LinkSource, OutcomeLink, ProgramBasis
 from app.models.base import Base
 from app.models.oauth import OAuthClient, OAuthGrant
 from app.models.org import (
@@ -42,6 +42,7 @@ __all__ = [
     "CourseProgram",
     "Criterion",
     "CriterionOutcome",
+    "LinkOrigin",
     "LinkSource",
     "Notification",
     "OutcomeLink",

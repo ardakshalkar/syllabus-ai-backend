@@ -631,6 +631,7 @@ async def _complete(
                     course_outcome=link.course_outcome,
                     course_outcome_text=link.course_outcome_text,
                     reason=link.reason,
+                    origin=link.origin,
                 )
                 for link in links or []
                 if (link.program, link.outcome) in programs.outcome_ids
@@ -649,6 +650,7 @@ async def _complete(
                     course_outcome=link.course_outcome,
                     course_outcome_text=link.course_outcome_text,
                     reason=link.reason,
+                    origin=link.origin,
                 )
                 for link in earlier.all()
             )

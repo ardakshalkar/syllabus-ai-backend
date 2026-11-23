@@ -16,6 +16,13 @@ class LinkSource(StrEnum):
     name = "name"  # the course's name is on the program's list of courses on narxoz.edu.kz
 
 
+class LinkOrigin(StrEnum):
+    """Where a link from a course outcome to a program outcome came from."""
+
+    declared = "declared"  # the syllabus itself says which program outcome the course outcome serves
+    inferred = "inferred"  # the model worked it out from the two texts
+
+
 class ProgramBasis(StrEnum):
     """Which programs a check compared the syllabus with, and so how far its alignment can be trusted."""
 
@@ -54,3 +61,6 @@ class OutcomeLink(UUIDPk, Base):
     course_outcome: Mapped[str] = mapped_column(sa.String(40))  # its code in the syllabus (LO1, РО 2) or "n"
     course_outcome_text: Mapped[str] = mapped_column(sa.Text)
     reason: Mapped[str] = mapped_column(sa.Text, default="")
+    origin: Mapped[LinkOrigin] = mapped_column(
+        str_enum(LinkOrigin), default=LinkOrigin.inferred, server_default=LinkOrigin.inferred.value
+    )

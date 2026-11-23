@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from app.ai.llm import LLMProvider
 from app.ai.types import ExtractedContent
+from app.models import LinkOrigin
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class Link:
     program: str
     outcome: int
     reason: str
+    origin: LinkOrigin = LinkOrigin.inferred  # every link `align` finds is the model's own reading
 
 
 def course_outcomes(content: ExtractedContent) -> tuple[list[dict[str, str]], str]:
