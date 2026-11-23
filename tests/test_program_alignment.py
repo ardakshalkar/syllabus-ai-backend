@@ -7,6 +7,7 @@ from app.db import pg
 from app.models import (
     AssessmentRun,
     CourseProgram,
+    LinkOrigin,
     LinkSource,
     OutcomeLink,
     Program,
@@ -104,6 +105,7 @@ async def test_a_known_program_grades_3_4_and_links_outcomes(ref, client_for):
     assert view["current"]["programs"][0]["code"] == "6B06199"
     lo1 = next(o for o in view["course_outcomes"] if o["code"] == "LO1")
     assert lo1["links"][0]["outcome"]["number"] == 1 and lo1["links"][0]["reason"]
+    assert {link["origin"] for o in view["course_outcomes"] for link in o["links"]} == {"inferred"}
 
 
 async def test_several_candidate_programs_leave_3_4_unverified_but_still_link(ref, client_for):
@@ -189,6 +191,16 @@ async def test_coverage_of_a_program_and_a_school(ref, client_for):
         and row["courses_linked"] == 1
         and row["courses_known"] == 1
     )
+    assert row["covered_declared"] == 0  # the model worked every link out; no syllabus stated one
+
+    async with pg.session_scope() as session:  # a link the syllabus itself states counts as declared
+        link = (
+            await session.scalars(sa.select(OutcomeLink).where(OutcomeLink.course_outcome == "LO1"))
+        ).first()
+        link.origin = LinkOrigin.declared
+    school = (await admin.get(f"/alignment/schools/{ref['schools']['digital'].id}?semester=Fall 2026")).json()
+    row = next(r for r in school["programs"] if r["program"]["code"] == "6B06191")
+    assert row["covered"] == 2 and row["covered_declared"] == 1
 
     coverage = (await admin.get(f"/alignment/programs/{program.id}?semester=Fall 2026")).json()
     first, second, third = coverage["outcomes"]
