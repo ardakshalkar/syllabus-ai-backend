@@ -23,6 +23,11 @@ class LLMError(Exception):
     pass
 
 
+class AnswerTooLongError(LLMError):
+    """The answer reached the output-token cap and was cut off. At temperature 0 the model would loop the same
+    way again, so it is not retried; a check marks the request's criteria "Cannot verify" instead of failing."""
+
+
 class KeyRefusedError(LLMError):
     """The server refused the API key itself (401, 402, 403: wrong key, no credit left, spending limit
     reached). Asking again cannot help, so it is never retried: every retry was another request refused
@@ -202,7 +207,7 @@ class _ChatProvider:
                 return result
             log.warning("LLM %s attempt %s/%s failed: %s", purpose, attempt, self.max_retries, error)
             if isinstance(last_error, _TruncatedError):
-                break
+                raise AnswerTooLongError(f"LLM call '{purpose}': {last_error}")
             if attempt < self.max_retries:
                 await asyncio.sleep(min(2**attempt, 20))
         raise LLMError(f"LLM call '{purpose}' failed after {attempt} attempt(s): {last_error}")
@@ -400,9 +405,10 @@ def get_llm() -> LLMProvider:
         from app.ai.fake import FakeProvider
 
         return FakeProvider()
+    cap = get_settings().llm_max_output_tokens or None
     if provider == "ollama":
-        return OllamaProvider()
-    return VllmProvider()
+        return OllamaProvider(None, cap)
+    return VllmProvider(None, cap)
 
 
 def get_translation_llm() -> LLMProvider:

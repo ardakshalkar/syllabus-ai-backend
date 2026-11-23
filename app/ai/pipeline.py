@@ -1,6 +1,7 @@
 """Full evaluation of one extracted syllabus. Pure: persistence is the caller's job (see services.checks)."""
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ from app.ai.checks.grounded import repair_evidence
 from app.ai.checks.technical import build_report, evaluate_rule
 from app.ai.decisions import Decision, DecisionMaker, get_decider
 from app.ai.evidence import evidence_found, recover_table_quote, verify
-from app.ai.llm import LLMError, LLMProvider
+from app.ai.llm import AnswerTooLongError, LLMError, LLMProvider
 from app.ai.quote_context import context_of
 from app.ai.types import (
     CriterionResultData,
@@ -24,6 +25,8 @@ from app.ai.types import (
 from app.config import get_settings
 from app.enums import CheckKind, EvaluationType, ResultStatus, Severity, severity
 from app.library import lookup as library
+
+log = logging.getLogger(__name__)
 
 ALL_CHECKS = frozenset(CheckKind)
 
@@ -218,6 +221,11 @@ async def evaluate(
                     result = await evaluate_principle(
                         llm, batch, content, report, context, run_id=run_id, trace=trace
                     )
+            except AnswerTooLongError:
+                # The model looped until the output cap: the rest of the check stands, these criteria wait for
+                # another run instead of failing the whole syllabus.
+                log.warning("Principle %s: the AI's answer was cut off at the output cap", name)
+                result = [_cannot_verify(s, "the AI's answer ran too long and was cut off") for s in batch]
             finally:
                 progress.running.remove(name)
         progress.principles_done += 1

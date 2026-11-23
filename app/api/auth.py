@@ -126,7 +126,7 @@ async def password_login(body: PasswordLogin, session: DbSession) -> Response:
     stored = user.password_hash if user is not None else None
     if not await passwords.verify(body.password, stored) or user is None or not user.is_active:
         await passwords.record_failure(email)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password.")
     await passwords.clear_failures(email)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _set_session_cookie(response, passwords.issue_session(user.id, user.password_hash or ""))
