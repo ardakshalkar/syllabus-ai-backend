@@ -25,6 +25,8 @@ class Principal:
     roles: set[Role] = field(default_factory=set)
     school_ids: set[uuid.UUID] = field(default_factory=set)
     program_ids: set[uuid.UUID] = field(default_factory=set)
+    # Set when the caller is a connected app (OAuth): the scope of its token, already lowered to the user's roles.
+    scope: str | None = None
 
     @classmethod
     def of(cls, user: User) -> "Principal":

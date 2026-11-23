@@ -30,6 +30,11 @@ dependencies = [
     "markitdown[docx,pdf]>=0.1.9",
 ]
 
+[project.optional-dependencies]
+mcp = [
+    "mcp>=1.9",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

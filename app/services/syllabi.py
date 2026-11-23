@@ -10,7 +10,7 @@ from app.ai.extraction import SUPPORTED_TYPES
 from app.auth.client import get_auth_client
 from app.auth.rbac import Principal, forbidden, syllabus_filter
 from app.config import get_settings
-from app.enums import AiStatus, ApprovalStage, RunStatus, VersionSource
+from app.enums import AiStatus, ApprovalStage, RunStatus, Trigger, VersionSource
 from app.models import (
     ApprovalEvent,
     AssessmentRun,
@@ -192,9 +192,25 @@ def syllabus_rows_query(principal: Principal) -> sa.Select:
         .where(SyllabusVersion.syllabus_id == Syllabus.id, AssessmentRun.status == RunStatus.completed)
         .scalar_subquery()
     )
+
+    def latest_of(column):
+        """A column of the latest completed check of the current version."""
+        return (
+            sa.select(column)
+            .join(SyllabusVersion, SyllabusVersion.id == AssessmentRun.version_id)
+            .where(current, AssessmentRun.status == RunStatus.completed)
+            .order_by(AssessmentRun.completed_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
+    latest_trigger = latest_of(AssessmentRun.trigger)
+    latest_model = latest_of(AssessmentRun.model_version)
     return (
         sa.select(
             Syllabus,
+            latest_trigger.label("latest_trigger"),
+            latest_model.label("latest_model"),
             Course.name.label("course_name"),
             Course.slug.label("course_slug"),
             Course.lead_id,
@@ -254,6 +270,35 @@ def apply_filters(query: sa.Select, f: SyllabusFilters, principal: Principal) ->
     return query
 
 
+def external_model(trigger: object, model_version: str | None) -> str | None:
+    """The name of the outside AI (a person's own Claude, ChatGPT) that made the latest check, else None."""
+    if trigger not in (Trigger.external_ai, Trigger.external_ai.value):
+        return None
+    return (model_version or "").removeprefix("external:").strip() or "AI"
+
+
+async def external_models(session: AsyncSession, syllabus_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """For the syllabi whose latest completed check of the current version was an outside AI's: its name."""
+    if not syllabus_ids:
+        return {}
+    rows = await session.execute(
+        sa.select(Syllabus.id, AssessmentRun.trigger, AssessmentRun.model_version)
+        .join(
+            SyllabusVersion,
+            sa.and_(
+                SyllabusVersion.syllabus_id == Syllabus.id,
+                SyllabusVersion.version == Syllabus.current_version,
+            ),
+        )
+        .join(AssessmentRun, AssessmentRun.version_id == SyllabusVersion.id)
+        .where(Syllabus.id.in_(syllabus_ids), AssessmentRun.status == RunStatus.completed)
+        .order_by(Syllabus.id, AssessmentRun.completed_at.desc())
+        .distinct(Syllabus.id)
+    )
+    found = {sid: external_model(trigger, model) for sid, trigger, model in rows.all()}
+    return {sid: name for sid, name in found.items() if name}
+
+
 def row_to_dict(row: sa.Row) -> dict:
     s: Syllabus = row[0]
     return {
@@ -283,6 +328,7 @@ def row_to_dict(row: sa.Row) -> dict:
         "in_drive": row.current_source == VersionSource.drive,
         "drive_missing": s.drive_missing_at is not None,
         "last_checked_version": row.last_checked_version,
+        "external_model": external_model(row.latest_trigger, row.latest_model),
         # The file changed in Drive after its last completed check: the current version is not checked yet.
         "drive_changed": row.current_source == VersionSource.drive
         and row.last_checked_version is not None

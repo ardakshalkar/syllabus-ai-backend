@@ -18,7 +18,7 @@ from app.enums import ISSUE_STATUSES, AiStatus, ResultStatus, RunStatus, Severit
 from app.models import AssessmentRun, Criterion, CriterionOutcome, School, Syllabus, SyllabusVersion
 from app.services import analytics
 from app.services.rubric import LoadedRubric, load_rubric
-from app.services.syllabi import syllabus_rows_query
+from app.services.syllabi import external_model, syllabus_rows_query
 
 # The most courses one report holds, as a guard against a runaway request rather than a working limit: a whole
 # university semester is several hundred courses and its PDF still renders in seconds. Beyond it it is refused.
@@ -27,6 +27,7 @@ REPORT_LIMIT = 1000
 ATTENTION = 10
 
 Bucket = Literal["critical", "major", "minor", "clean", "cannot_check", "not_checked"]
+_CHECKED = ("critical", "major", "minor", "clean")
 
 
 def _bucket(s: Syllabus) -> Bucket:
@@ -44,9 +45,10 @@ def _bucket(s: Syllabus) -> Bucket:
     return "minor"
 
 
-def _counts(syllabi: list[Syllabus]) -> dict[str, int]:
+def _counts(syllabi: list[Syllabus], external: int = 0) -> dict[str, int]:
     c = Counter(_bucket(s) for s in syllabi)
     return {
+        "external": external,
         "found": len(syllabi),
         "checked": c["critical"] + c["major"] + c["minor"] + c["clean"],
         "with_critical": c["critical"],
@@ -107,9 +109,12 @@ async def summary(
 ) -> dict:
     rows = await _rows(session, principal, semester, school_id)
     by_school: dict[uuid.UUID, list] = defaultdict(list)
+    external_by_school: Counter = Counter()
     names: dict[uuid.UUID, str] = {}
     for r in rows:
         by_school[r.school_id].append(r.Syllabus)
+        if external_model(r.latest_trigger, r.latest_model) and _bucket(r.Syllabus) in _CHECKED:
+            external_by_school[r.school_id] += 1
         names[r.school_id] = r.school_name
     issues = await analytics.frequent_issues(
         session, principal, semester=semester, school_id=school_id, limit=100
@@ -135,6 +140,7 @@ async def summary(
                 "language": r.Syllabus.language,
                 **_severities(r.Syllabus),
                 "top_issue": tops.get(r.Syllabus.id),
+                "external_model": external_model(r.latest_trigger, r.latest_model),
             }
             for r in worst
         ]
@@ -142,12 +148,12 @@ async def summary(
         "semester": semester,
         "school_id": school_id,
         "school_name": names.get(school_id) if school_id else None,
-        "totals": _counts([r.Syllabus for r in rows]),
+        "totals": _counts([r.Syllabus for r in rows], sum(external_by_school.values())),
         "schools": [
             {
                 "school_id": sid,
                 "school_name": names[sid],
-                **_counts(syllabi),
+                **_counts(syllabi, external_by_school[sid]),
                 "top_issue": top_by_school.get(sid),
             }
             for sid, syllabi in sorted(by_school.items(), key=lambda kv: names[kv[0]])
@@ -259,6 +265,8 @@ async def report(
                     "program_name": r.program_name,
                     "professor_name": r.professor_name,
                     "language": r.Syllabus.language,
+                    # The AI of a person's own that judged it (an External AI run), else None: the checker did.
+                    "external_model": external_model(r.latest_trigger, r.latest_model),
                     **_severities(r.Syllabus),
                     "findings": findings,
                 }

@@ -8,12 +8,15 @@ from app.api import (
     auth,
     catalog,
     drive,
+    external_checks,
     improve,
     me,
     notifications,
+    oauth,
     precheck,
     semesters,
     sessions,
+    study_plans,
     syllabi,
     wizard,
 )
@@ -25,6 +28,7 @@ for module in (
     auth,
     catalog,
     drive,
+    external_checks,
     syllabi,
     alignment,
     approval,
@@ -34,6 +38,8 @@ for module in (
     sessions,
     analytics,
     notifications,
+    oauth,
     semesters,
+    study_plans,
 ):
     api_router.include_router(module.router)

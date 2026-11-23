@@ -261,6 +261,9 @@ class FolderFileOut(Schema):
     issues: int | None
     critical_issues: int | None = Field(default=None, description="of its issues, how many are critical")
     major_issues: int | None = Field(default=None, description="of its issues, how many are major")
+    external_model: str | None = Field(
+        default=None, description="set when an outside AI made its latest check"
+    )
 
 
 class CourseFolderOut(Schema):

@@ -44,6 +44,7 @@ from app.models import (
     SyllabusVersion,
     UploadFolder,
 )
+from app.services.syllabi import external_models
 from app.storage import cache, drive_config
 from app.storage.drive import DriveClient, DriveEntry, explain_error, explain_folder_error, get_drive, nfc
 
@@ -258,6 +259,7 @@ async def folder_contents(
             )
         )
         known = {file_id: syllabus for file_id, syllabus in rows.all() if file_id}
+    outside = await external_models(session, [s.id for s in known.values()])
     courses: dict[str, dict[str, Any]] = {
         cid: {"name": name, "drive_id": cid, "excluded": cid in excluded, "files": []}
         for cid, name in listing.courses
@@ -281,6 +283,7 @@ async def folder_contents(
                 "issues": s.issues if s else None,
                 "critical_issues": s.critical_issues if s else None,
                 "major_issues": s.major_issues if s else None,
+                "external_model": outside.get(s.id) if s else None,
             }
         )
     return {

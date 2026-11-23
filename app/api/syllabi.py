@@ -10,9 +10,10 @@ from app.ai.extraction import ExtractionError
 from app.api.common import run_out, version_out
 from app.auth.rbac import ensure_can_check, ensure_can_view, ensure_course_lead, manages_school
 from app.deps import CurrentUser, DbSession
+from app.documents import ExtractedDocument
 from app.enums import AiStatus, ApprovalStage, RunStatus, Severity, Trigger, VersionSource, severity
 from app.models import AssessmentRun, SyllabusVersion, UploadFolder
-from app.schemas.common import Page
+from app.schemas.common import Page, Schema
 from app.schemas.syllabus import (
     CompareOut,
     CriterionResultOut,
@@ -167,6 +168,28 @@ async def download_version(version_id: uuid.UUID, principal: CurrentUser, sessio
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "The file of this version is missing") from exc
     return FileResponse(path, media_type=version.content_type, filename=version.filename)
+
+
+class VersionTextOut(Schema):
+    version_id: uuid.UUID
+    filename: str
+    chars: int
+    text: str
+
+
+@router.get("/versions/{version_id}/text", response_model=VersionTextOut)
+async def version_text(version_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+    """The syllabus of this version as text (Markdown where the file had tables), as the checker reads it.
+    For a person who wants their own AI to judge it. 404 until the file has been read (right after an upload)."""
+    version = await _visible_version(session, principal, version_id)
+    document = await ExtractedDocument.find_one(ExtractedDocument.version_id == version.id)
+    if document is None or not document.content.raw_text:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "This version has no text yet: it is not read, or it is a scan with no text",
+        )
+    text = document.content.raw_text
+    return VersionTextOut(version_id=version.id, filename=version.filename, chars=len(text), text=text)
 
 
 @router.get("/versions/{version_id}/runs", response_model=list[RunOut])

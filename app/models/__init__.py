@@ -1,5 +1,6 @@
 from app.models.alignment import CourseProgram, LinkSource, OutcomeLink, ProgramBasis
 from app.models.base import Base
+from app.models.oauth import OAuthClient, OAuthGrant
 from app.models.org import (
     Course,
     Program,
@@ -13,6 +14,7 @@ from app.models.org import (
 )
 from app.models.rubric import Criterion, Principle, RubricVersion
 from app.models.semester import Semester
+from app.models.study_plan import PlanSource, PlanStatus, StudyPlan, StudyPlanCourse, StudyPlanEvent
 from app.models.syllabus import AssessmentRun, CriterionOutcome, Syllabus, SyllabusVersion
 from app.models.workflow import (
     ApprovalEvent,
@@ -24,6 +26,13 @@ from app.models.workflow import (
 )
 
 __all__ = [
+    "OAuthClient",
+    "OAuthGrant",
+    "PlanSource",
+    "PlanStatus",
+    "StudyPlan",
+    "StudyPlanCourse",
+    "StudyPlanEvent",
     "AppSetting",
     "ApprovalEvent",
     "AssessmentRun",

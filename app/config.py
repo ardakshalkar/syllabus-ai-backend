@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     test_users_password: str = ""
     # false only for http://localhost; the cookie is HttpOnly and SameSite=Lax either way.
     cookie_secure: bool = True
+    # Connected apps (Claude and other MCP clients sign in through OAuth, app/auth/oauth.py). The public address of
+    # this server as the apps see it, e.g. https://syllabus.narxoz.kz; empty: taken from the request (fine behind a
+    # proxy only with forwarded headers).
+    oauth_issuer: str = ""
+    # Where the app sends the person to approve a connection (a screen of the frontend).
+    oauth_consent_path: str = "/connect-mcp"
+    oauth_access_ttl_s: int = 3600
+    oauth_refresh_ttl_days: int = 60
     auth_service_url: str = ""
     auth_service_verify_path: str = "/verify"
     auth_service_timeout_s: float = 5

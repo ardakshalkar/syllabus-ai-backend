@@ -184,6 +184,8 @@ async def reusable_run(
                 SyllabusVersion.syllabus_id == version.syllabus_id,
                 AssessmentRun.status == RunStatus.completed,
                 AssessmentRun.rubric_version_id == rubric_version_id,
+                # An outside AI's check is never the checker's own answer, whatever the file.
+                AssessmentRun.trigger != Trigger.external_ai,
             )
             .order_by(AssessmentRun.completed_at.desc())
         )
