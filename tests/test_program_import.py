@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 
+import httpx
 import sqlalchemy as sa
 
 from app.db import pg
@@ -150,7 +151,7 @@ async def _imported_id(code: str = "6B04103"):
         return await session.scalar(sa.select(Program.id).where(Program.code == code))
 
 
-async def test_outcomes_are_corrected_by_hand_and_survive_an_import(ref, client_for):
+async def test_outcomes_are_corrected_by_hand_and_survive_an_import(ref, client_for, monkeypatch):
     program_id = await _imported_id()
     kok = client_for(ref["users"]["kok"])
 
@@ -176,9 +177,18 @@ async def test_outcomes_are_corrected_by_hand_and_survive_an_import(ref, client_
     got = (await kok.get(f"/programs/{program_id}")).json()
     assert [o["text"].get("en") for o in got["outcomes"]] == ["Applies analytical tools.", "x", "Third."]
 
-    # Restoring lets the next import bring the site's text back.
+    # Restoring reads the site now and puts its text back at once: the edits and the added third outcome go.
+    async def site(client, slug):
+        assert slug == "finance-ba"
+        return site_program()
+
+    monkeypatch.setattr(pi, "fetch_site_program", site)
     restored = await kok.delete(f"/programs/{program_id}/outcome-edits")
     assert restored.status_code == 200 and restored.json()["outcomes_edited_at"] is None
+    assert [o["text"]["en"] for o in restored.json()["outcomes"]] == [
+        "Applies analytical tools.",
+        "Prepares IFRS statements.",
+    ]
     async with pg.session_scope() as session:
         report = await pi.import_programs(session, [site_program()])
     assert report.outcomes_kept == [] and report.outcomes == 2
@@ -236,3 +246,26 @@ async def test_university_overview_lists_every_programs_coverage(ref, client_for
     ]
     assert ("Школа экономики и менеджмента", "6B04103", 2, 0) in rows
     assert body["checked"] == 0
+
+
+async def test_a_restore_that_cannot_reach_the_site_keeps_the_edits(ref, client_for, monkeypatch):
+    program_id = await _imported_id()
+    kok = client_for(ref["users"]["kok"])
+    await kok.patch(f"/programs/{program_id}/outcomes/1", json={"text": {"en": "Mine."}})
+
+    async def down(client, slug):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(pi, "fetch_site_program", down)
+    failed = await kok.delete(f"/programs/{program_id}/outcome-edits")
+    assert failed.status_code == 502 and "your edits are kept" in failed.json()["detail"]
+
+    async def empty(client, slug):
+        return site_program(outcomes=0)
+
+    monkeypatch.setattr(pi, "fetch_site_program", empty)
+    nothing = await kok.delete(f"/programs/{program_id}/outcome-edits")
+    assert nothing.status_code == 409 and "nothing to restore" in nothing.json()["detail"]
+
+    got = (await kok.get(f"/programs/{program_id}")).json()
+    assert got["outcomes_edited_at"] and got["outcomes"][0]["text"]["en"] == "Mine."  # still protected
