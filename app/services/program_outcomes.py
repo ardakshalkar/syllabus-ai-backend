@@ -2,7 +2,7 @@
 
 The outcomes come from narxoz.edu.kz, which has mistakes (a repeated outcome, a missing language, a program with no
 outcomes at all). Editing marks the program (`outcomes_edited_at`), and `import-programs` then leaves its outcomes
-alone; `restore_from_site` takes the mark off so the next import brings the site's text back.
+alone; `restore_from_site` reads the program from the site at once, puts its text back and takes the mark off.
 
 An outcome is addressed by its number. Rows keep their id when the text changes, so the links earlier checks made to
 them stay. Deleting one removes its links and renumbers the ones after it.
@@ -11,10 +11,12 @@ them stay. Deleting one removes its links and renumbers the ones after it.
 import uuid
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Program, ProgramOutcome
+from app.services import program_import as pi
 
 LANGS = ("ru", "kk", "en")
 MAX_TEXT = 2000
@@ -88,8 +90,30 @@ async def remove(session: AsyncSession, program: Program, number: int) -> Progra
 
 
 async def restore_from_site(session: AsyncSession, program: Program) -> Program:
-    """Forget the hand edits' protection: the next import-programs run replaces the outcomes with the site's."""
+    """Reads the program from narxoz.edu.kz now and puts the site's outcomes back, dropping the hand edits and the
+    links earlier checks made to outcomes that no longer exist. If the site cannot be read, or lists no outcomes for
+    the program, nothing changes: the edits and their protection from `import-programs` stay."""
+    if not program.site_slug:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This program has no page on narxoz.edu.kz to restore from"
+        )
+    headers = {"User-Agent": "syllabus-checker program restore", "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=30, headers=headers, follow_redirects=True) as client:
+            site = await pi.fetch_site_program(client, program.site_slug)
+    except (httpx.HTTPError, KeyError, ValueError, StopIteration) as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"narxoz.edu.kz could not be read ({type(exc).__name__}); your edits are kept",
+        ) from exc
+    if not site.outcomes:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The site lists no learning outcomes for this program, so there is nothing to restore; your edits are kept",
+        )
+    pi.replace_outcomes(program, site.outcomes)
     program.outcomes_edited_at = None
+    program.imported_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(program)
     return program

@@ -145,6 +145,17 @@ async def fetch_site_programs(
     return programs, failed
 
 
+async def fetch_site_program(client: httpx.AsyncClient, slug: str) -> SiteProgram:
+    """One program from the site by its page slug (what a restore reads, instead of listing every program)."""
+    details = {lang: await _get(client, f"{API}{slug}/", lang) for lang in LANGS}
+    return parse_program(details)
+
+
+def replace_outcomes(program: Program, outcomes: list[dict[str, str]]) -> None:
+    """The program's outcomes become these: rows keep their ids by number, new ones are added, the surplus goes."""
+    _sync_rows(program.outcomes, outcomes, lambda n, t: ProgramOutcome(number=n, text=t), _set_outcome)
+
+
 @dataclass
 class ImportReport:
     created: list[str] = field(default_factory=list)
@@ -228,9 +239,7 @@ async def import_programs(
         program.goal = p.goal or None
         program.imported_at = now
         if program.outcomes_edited_at is None:
-            _sync_rows(
-                program.outcomes, p.outcomes, lambda n, t: ProgramOutcome(number=n, text=t), _set_outcome
-            )
+            replace_outcomes(program, p.outcomes)
             report.outcomes += len(p.outcomes)
         else:
             report.outcomes_kept.append(p.code)

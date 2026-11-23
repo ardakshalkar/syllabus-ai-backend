@@ -130,6 +130,7 @@ async def delete_outcome(program_id: uuid.UUID, number: int, principal: CurrentU
 
 @router.delete("/programs/{program_id}/outcome-edits", response_model=ProgramDetailOut)
 async def restore_outcomes(program_id: uuid.UUID, principal: CurrentUser, session: DbSession):
-    """Lets the next import-programs run replace the outcomes with the site's again."""
+    """Reads the program from narxoz.edu.kz now and puts the site's outcomes back (the hand edits are dropped).
+    502 when the site cannot be read and 409 when it lists no outcomes: the edits are then kept."""
     program = await _editable_program(session, principal, program_id)
     return ProgramDetailOut.of(await program_outcomes.restore_from_site(session, program))
