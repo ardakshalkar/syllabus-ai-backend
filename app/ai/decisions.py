@@ -39,7 +39,12 @@ class DecisionMaker(Protocol):
     model_version: str
 
     async def decide(
-        self, state: list[str], specs: list[CriterionSpec], *, run_id: uuid.UUID | None = None, trace: bool = True
+        self,
+        state: list[str],
+        specs: list[CriterionSpec],
+        *,
+        run_id: uuid.UUID | None = None,
+        trace: bool = True,
     ) -> dict[str, "Decision"]: ...
 
 
@@ -89,7 +94,8 @@ class Decider:
         self.max_retries = s.llm_max_retries
         key = s.openrouter_api_key or s.llm_api_key
         self.client = httpx.AsyncClient(
-            timeout=s.llm_timeout_s, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            timeout=s.llm_timeout_s,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         )
 
     async def decide(
@@ -136,7 +142,11 @@ class Decider:
                 decisions = parse_answers(specs, data.get("answers") or {})
                 log.info(
                     "decisions: %s/%s criteria in %.1fs, %s tokens, $%s",
-                    len(decisions), len(specs), duration, usage.get("input_tokens"), usage.get("cost"),
+                    len(decisions),
+                    len(specs),
+                    duration,
+                    usage.get("input_tokens"),
+                    usage.get("cost"),
                 )
                 return decisions
             last_error = error or "no answer"

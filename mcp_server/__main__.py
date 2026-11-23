@@ -4,7 +4,7 @@ Settings come from the environment (or flags):
   SYLLABUS_API_URL       the API, e.g. https://syllabus.example.kz/api/v1 (default http://localhost:8080/api/v1)
   SYLLABUS_API_TOKEN     a bearer token, or
   SYLLABUS_API_EMAIL / SYLLABUS_API_PASSWORD   a user to sign in as (use a dedicated user with only the role it needs)
-  MCP_TIER               read (default), write, or full
+  MCP_TIER               read (default) or write
   MCP_INCLUDE / MCP_EXCLUDE   comma-separated tool names to add from outside the tier, or to drop from it
   SYLLABUS_OPENAPI_FILE  read the API description from this file instead of GET <root>/openapi.json
 """

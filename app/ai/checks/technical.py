@@ -42,7 +42,9 @@ def build_report(content: ExtractedContent) -> TechnicalReport:
         )
     if not content.outcomes:
         report.issues.append(
-            TechnicalIssue(code="no_outcomes", message="No learning outcomes were found by the automatic reading")
+            TechnicalIssue(
+                code="no_outcomes", message="No learning outcomes were found by the automatic reading"
+            )
         )
     return report
 

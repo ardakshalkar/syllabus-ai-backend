@@ -25,20 +25,20 @@ def _paths(spec):
 def test_every_listed_endpoint_exists_in_the_api(spec):
     """A renamed or removed endpoint must fail here, not silently drop a tool."""
     paths = _paths(spec)
-    for method, path in {**catalog.READ, **catalog.WRITE, **catalog.FULL}:
+    for method, path in {**catalog.READ, **catalog.WRITE}:
         assert method in paths.get(path, set()), f"{method} {path} is not in the API"
 
 
 def test_tool_names_are_unique_and_tiers_nest(spec):
-    everything = [*catalog.READ.values(), *catalog.WRITE.values(), *catalog.FULL.values()]
+    everything = [*catalog.READ.values(), *catalog.WRITE.values()]
     assert len(everything) == len(set(everything))
-    read, write, full = ({t.name for t in catalog.build_tools(spec, tier)} for tier in catalog.TIERS)
-    assert read < write < full
-    assert len(full) == len(everything)
+    read, write = ({t.name for t in catalog.build_tools(spec, tier)} for tier in catalog.TIERS)
+    assert read < write
+    assert len(write) == len(everything)
 
 
 def test_nothing_dangerous_is_reachable_in_any_tier():
-    for key in {**catalog.READ, **catalog.WRITE, **catalog.FULL}:
+    for key in {**catalog.READ, **catalog.WRITE}:
         method, path = key
         assert not path.startswith(catalog.NEVER), f"{method} {path} must never be a tool"
         assert not path.endswith((".pdf", ".csv", ".txt", "/file")), f"{path} is a download"
@@ -50,12 +50,12 @@ def test_the_read_tier_changes_nothing(spec):
         assert tool.method == "GET" or tool.name in ("estimate_check_cost", "find_course_in_plans")
 
 
-def test_costly_and_outward_actions_need_the_full_tier(spec):
+def test_nothing_that_costs_money_or_goes_out_is_a_tool(spec):
     names = {t.name for t in catalog.build_tools(spec, "write")}
     assert not names & {"start_check_session", "run_check", "send_review_report", "move_syllabus_stage"}
-    assert {"start_check_session", "run_check", "send_review_report"} <= {
-        t.name for t in catalog.build_tools(spec, "full")
-    }
+    assert "get_syllabus_text" in names and "get_rubric" in names  # what an AI needs to judge a syllabus
+    with pytest.raises(ValueError):
+        catalog.allowed("full")
 
 
 def test_include_and_exclude_by_tool_name(spec):
@@ -71,7 +71,7 @@ def test_include_and_exclude_by_tool_name(spec):
 
 
 def test_schemas_stand_alone(spec):
-    for tool in catalog.build_tools(spec, "full"):
+    for tool in catalog.build_tools(spec, "write"):
         schema = tool.input_schema
         assert schema["type"] == "object"
         text = json.dumps(schema)

@@ -11,7 +11,10 @@ from mcp_server.client import ApiClient
 INSTRUCTIONS = (
     "Tools for the Narxoz syllabus checker: Schools, programs, courses, syllabi and their AI checks, program alignment, "
     "analysis, and study plans (учебные планы). Ids are UUIDs: list first, then fetch by id. A tool that changes data says so "
-    "in its description. Study plans created through these tools are drafts until a School administrator activates them."
+    "in its description. Study plans created through these tools are drafts until a School administrator activates them. "
+    "To judge a syllabus yourself: get_rubric (the criteria and their guidance), get_syllabus then get_syllabus_text for "
+    "the latest version, and compare. Quote the syllabus for every finding, say Compliant / Partial / Missing / Cannot "
+    "tell for each criterion, and only post it (comment_on_syllabus) when the user asks you to."
 )
 
 
