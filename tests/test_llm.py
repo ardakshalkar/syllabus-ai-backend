@@ -201,8 +201,9 @@ def _counting_provider(monkeypatch, finish_reason: str, **env: str) -> tuple[lis
     return bodies, {"http_client": httpx.AsyncClient(transport=httpx.MockTransport(handler))}
 
 
-async def test_translation_requests_carry_the_output_cap_and_checks_do_not(monkeypatch):
+async def test_translation_and_check_requests_carry_their_own_output_caps(monkeypatch):
     from app.ai.llm import get_llm, get_translation_llm
+    from app.config import get_settings
 
     bodies, client = _counting_provider(
         monkeypatch, "stop", LLM_PROVIDER="openrouter", TRANSLATION_MAX_OUTPUT_TOKENS="5000"
@@ -211,7 +212,7 @@ async def test_translation_requests_carry_the_output_cap_and_checks_do_not(monke
         llm.client = openai.AsyncOpenAI(base_url="http://llm.test/v1", api_key="k", **client)
         assert await _ask(llm) == {"ok": True}
     assert bodies[0]["max_tokens"] == 5000
-    assert "max_tokens" not in bodies[1]
+    assert bodies[1]["max_tokens"] == get_settings().llm_max_output_tokens
 
 
 async def test_an_answer_cut_off_at_the_cap_fails_without_being_asked_again(monkeypatch):

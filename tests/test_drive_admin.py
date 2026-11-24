@@ -3,6 +3,7 @@ Google is never called: the Drive client's network methods are replaced where a 
 
 import json
 import stat
+import sys
 import uuid
 
 import pytest
@@ -83,7 +84,8 @@ async def test_uploaded_key_switches_the_app_to_google_drive(ref, client_for, se
     assert "private_key" not in response.text
     key_file = get_settings().secrets_root / drive_config.KEY_FILENAME
     assert key_file.read_bytes() == service_account_key
-    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    if sys.platform != "win32":  # Windows has no fchmod; the file keeps the folder's ACL
+        assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
     assert (await provost.get("/integrations")).json()["drive"] == "google"
 
     deleted = await provost.delete("/drive/credentials")
@@ -144,7 +146,7 @@ async def test_check_reports_the_account_and_each_folder(ref, client_for, servic
     shared, missing = result["folders"]
     assert shared["ok"] and shared["name"] == "Syllabi" and shared["location"] == "My Drive"
     assert "no storage of its own" in shared["warnings"][0]  # My Drive + service account + writes on
-    assert not missing["ok"] and "share it with the service account" in missing["error"]
+    assert not missing["ok"] and "Share it with the app's Google service account" in missing["error"]
     assert result["ok"] is False
     await provost.delete("/drive/credentials")
 

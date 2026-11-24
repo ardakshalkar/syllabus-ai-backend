@@ -57,7 +57,7 @@ async def test_schools_programs_and_courses_can_be_added(ref, client_for):
 
 async def test_integrations_reports_what_the_app_uses(ref, client_for):
     body = (await client_for(ref["users"]["provost"]).get("/integrations")).json()
-    assert body == {"auth": "stub", "drive": "stub", "email": "console", "llm": "fake"}
+    assert body == {"auth": "stub", "drive": "stub", "email": "console", "llm": "fake", "library": "off"}
 
 
 async def test_add_user_accepts_the_title_and_a_program_slug(ref):

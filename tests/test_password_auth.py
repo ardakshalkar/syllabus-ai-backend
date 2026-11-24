@@ -11,7 +11,7 @@ from app.db import pg
 from app.enums import Role
 from app.models import User
 from app.services import users
-from app.services.demo_users import add_demo_users, setup_schools
+from app.services.demo_users import SCHOOLS, add_demo_users, setup_schools
 
 PASSWORD = "correct horse battery"
 
@@ -132,7 +132,8 @@ async def test_test_users_get_the_password(ref, anon, password_auth):
     async with pg.session_scope() as session:
         await setup_schools(session)
         report = await add_demo_users(session, domain="t.test", password=PASSWORD)
-    assert len(report.roles) == 12
+    # Administrator, Provost, KOK; an admin and a program head per School; one professor.
+    assert len(report.roles) == 3 + 2 * len(SCHOOLS) + 1
     for email in ("superadmin@t.test", "provost@t.test", "admin.law@t.test", "karimova@t.test"):
         login = await anon.post("/auth/login", json={"email": email, "password": PASSWORD})
         assert login.status_code == 204, email

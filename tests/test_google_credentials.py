@@ -81,7 +81,7 @@ def _http_error(status: int, reason: str) -> HttpError:
     [
         (_http_error(403, "storageQuotaExceeded"), "Shared Drive"),
         (_http_error(403, "accessNotConfigured"), "API is not enabled"),
-        (_http_error(404, "notFound"), "share it with the service account"),
+        (_http_error(404, "notFound"), "Share it with the app's Google service account"),
         (_http_error(403, "insufficientFilePermissions"), "Content manager"),
     ],
 )

@@ -35,7 +35,9 @@ async def test_one_semester_is_current(ref, client_for):
 
 async def test_only_an_unused_semester_can_be_deleted(ref, client_for):
     provost = client_for(ref["users"]["provost"])
-    current = next(s for s in (await provost.get("/semesters")).json() if s["is_current"])
+    # The test data starts with no semesters (the one the migration adds is cleared), so make one current.
+    current = (await provost.post("/semesters", json={"name": "Fall 2026"})).json()
+    assert (await provost.patch(f"/semesters/{current['id']}", json={"is_current": True})).status_code == 200
     assert (await provost.delete(f"/semesters/{current['id']}")).status_code == 409
     # A semester something already names: a folder registered for it.
     used = (await provost.post("/semesters", json={"name": "Autumn 2027"})).json()

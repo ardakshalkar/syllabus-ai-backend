@@ -58,6 +58,9 @@ def containers(tmp_path_factory):
             PASSWORD_LOGIN="false",
             # Pinned so a developer .env (e.g. switched to real data) cannot change test behaviour.
             DRIVE_READ_ONLY="false",
+            # No library lookup: with integrations/library.yaml the checks would search the live Narxoz
+            # catalogue, so criterion 7.2 (and every issue count) would depend on the network and the library.
+            LIBRARY_CONFIG=str(tmp_path_factory.mktemp("library") / "none.yaml"),
         )
         from app.config import get_settings
 
