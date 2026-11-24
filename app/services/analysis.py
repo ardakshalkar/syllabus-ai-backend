@@ -175,19 +175,23 @@ async def report(
     semester: str,
     school_id: uuid.UUID | None,
     include: Literal["summary", "critical", "all"],
+    syllabus_id: uuid.UUID | None = None,
 ) -> dict:
     head = await summary(session, principal, semester=semester, school_id=school_id)
     head.pop("attention")
     rows = await _rows(session, principal, semester, school_id)
-    wanted = {"summary": (), "critical": ("critical",), "all": ("critical", "major", "minor", "clean")}[
-        include
-    ]
-    picked = [r for r in rows if _bucket(r.Syllabus) in wanted]
-    if len(picked) > REPORT_LIMIT:
-        raise ReportTooLarge(
-            f"The report would hold {len(picked)} courses; it holds at most {REPORT_LIMIT}. "
-            "Pick one School, or only the courses with critical findings."
-        )
+    if syllabus_id:
+        picked = [r for r in rows if r.Syllabus.id == syllabus_id]
+    else:
+        wanted = {"summary": (), "critical": ("critical",), "all": ("critical", "major", "minor", "clean")}[
+            include
+        ]
+        picked = [r for r in rows if _bucket(r.Syllabus) in wanted]
+        if len(picked) > REPORT_LIMIT:
+            raise ReportTooLarge(
+                f"The report would hold {len(picked)} courses; it holds at most {REPORT_LIMIT}. "
+                "Pick one School, or only the courses with critical findings."
+            )
     picked.sort(
         key=lambda r: (
             r.school_name,
