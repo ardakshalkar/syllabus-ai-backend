@@ -678,9 +678,10 @@ async def build(
     school_id: uuid.UUID | None,
     include: Include,
     lang: Lang = "en",
+    syllabus_id: uuid.UUID | None = None,
 ) -> tuple[dict, bytes, str]:
     report = await analysis.report(
-        session, principal, semester=semester, school_id=school_id, include=include
+        session, principal, semester=semester, school_id=school_id, include=include, syllabus_id=syllabus_id
     )
     pdf = await asyncio.to_thread(render_pdf, report, lang)
     return report, pdf, filename(report)
