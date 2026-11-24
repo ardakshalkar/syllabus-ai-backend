@@ -141,9 +141,9 @@ async def test_folder_configuration(ref, client_for):
 
     created = await admin.post(
         f"/schools/{ref['schools']['digital'].id}/folders",
-        json={"path": "New", "semester": "Fall 2026", "drive_folder_id": "abc"},
+        json={"path": "New", "semester": "Fall 2026", "drive_folder_id": "abcdefghij"},
     )
-    assert created.status_code == 201 and created.json()["drive_folder_id"] == "abc"
+    assert created.status_code == 201 and created.json()["drive_folder_id"] == "abcdefghij"
 
 
 async def test_folder_reports_its_last_copy(ref, client_for):

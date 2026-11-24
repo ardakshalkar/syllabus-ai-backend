@@ -179,7 +179,8 @@ async def test_analytics(ref, client_for):
 
     csv = await provost.get("/analytics/export.csv", params=params)
     assert csv.headers["content-type"].startswith("text/csv")
-    assert "School of Digital Technologies,3,2,2,1,0,0" in csv.text
+    # No expected count since a942619: School, found, checked, needs revision, awaiting approval, approved.
+    assert "School of Digital Technologies,2,2,1,0,0" in csv.text
 
     admin_view = (await client_for(ref["users"]["admin.digital"]).get("/overview", params=params)).json()
     assert [r["school_name"] for r in admin_view] == ["School of Digital Technologies"]
@@ -238,7 +239,13 @@ async def test_auth(ref, anon, client_for):
     rubric = (await client_for(ref["users"]["kok"]).get("/rubric")).json()
     assert rubric["code"] == "2026.1" and sum(len(p["criteria"]) for p in rubric["principles"]) == 49
     integrations = (await client_for(ref["users"]["kok"]).get("/integrations")).json()
-    assert integrations == {"auth": "stub", "drive": "stub", "email": "console", "llm": "fake"}
+    assert integrations == {
+        "auth": "stub",
+        "drive": "stub",
+        "email": "console",
+        "llm": "fake",
+        "library": "off",
+    }
 
 
 async def test_catalog(ref, client_for):

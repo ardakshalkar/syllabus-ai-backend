@@ -204,6 +204,7 @@ async def test_an_ended_connection_tells_the_model_to_connect_again(spec):
 
 
 async def test_the_verifier_asks_the_backend_and_remembers_for_a_moment():
+    pytest.importorskip("mcp", reason="the optional mcp extra is not installed")
     from mcp_server.auth import BackendTokenVerifier
 
     asked = []
