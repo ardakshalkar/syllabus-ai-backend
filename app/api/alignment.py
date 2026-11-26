@@ -2,9 +2,10 @@
 and how well each program's outcomes are covered by the courses checked in a semester."""
 
 import uuid
+from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 
 from app.auth.rbac import ensure_can_view, forbidden, manages_school
 from app.deps import CurrentUser, DbSession
@@ -21,7 +22,7 @@ from app.schemas.alignment import (
 )
 from app.schemas.catalog import ProgramDetailOut
 from app.services import alignment_views as views
-from app.services import program_links, program_outcomes
+from app.services import catalog_edit, program_links, program_outcomes
 from app.services.syllabi import get_syllabus
 
 router = APIRouter(tags=["alignment"])
@@ -96,6 +97,10 @@ async def university_coverage(semester: str, principal: CurrentUser, session: Db
     return await views.university_coverage(session, semester)
 
 
+def _audit(principal, x_client: str | None) -> tuple[uuid.UUID, str]:
+    return principal.id, catalog_edit.channel_of(x_client)
+
+
 async def _editable_program(session, principal, program_id: uuid.UUID) -> Program:
     program = await program_outcomes.imported_program(session, program_id)
     if not manages_school(principal, program.school_id):
@@ -108,29 +113,59 @@ async def _editable_program(session, principal, program_id: uuid.UUID) -> Progra
 @router.post(
     "/programs/{program_id}/outcomes", response_model=ProgramDetailOut, status_code=status.HTTP_201_CREATED
 )
-async def add_outcome(program_id: uuid.UUID, body: OutcomeTextIn, principal: CurrentUser, session: DbSession):
+async def add_outcome(
+    program_id: uuid.UUID,
+    body: OutcomeTextIn,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
     program = await _editable_program(session, principal, program_id)
-    return ProgramDetailOut.of(await program_outcomes.add(session, program, body.text))
+    return ProgramDetailOut.of(
+        await program_outcomes.add(session, program, body.text, _audit(principal, x_client))
+    )
 
 
 @router.patch("/programs/{program_id}/outcomes/{number}", response_model=ProgramDetailOut)
 async def edit_outcome(
-    program_id: uuid.UUID, number: int, body: OutcomeTextIn, principal: CurrentUser, session: DbSession
+    program_id: uuid.UUID,
+    number: int,
+    body: OutcomeTextIn,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
 ):
     program = await _editable_program(session, principal, program_id)
-    return ProgramDetailOut.of(await program_outcomes.edit(session, program, number, body.text))
+    return ProgramDetailOut.of(
+        await program_outcomes.edit(session, program, number, body.text, _audit(principal, x_client))
+    )
 
 
 @router.delete("/programs/{program_id}/outcomes/{number}", response_model=ProgramDetailOut)
-async def delete_outcome(program_id: uuid.UUID, number: int, principal: CurrentUser, session: DbSession):
+async def delete_outcome(
+    program_id: uuid.UUID,
+    number: int,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
     """Removes the outcome and the links earlier checks made to it; the outcomes after it move up one number."""
     program = await _editable_program(session, principal, program_id)
-    return ProgramDetailOut.of(await program_outcomes.remove(session, program, number))
+    return ProgramDetailOut.of(
+        await program_outcomes.remove(session, program, number, _audit(principal, x_client))
+    )
 
 
 @router.delete("/programs/{program_id}/outcome-edits", response_model=ProgramDetailOut)
-async def restore_outcomes(program_id: uuid.UUID, principal: CurrentUser, session: DbSession):
+async def restore_outcomes(
+    program_id: uuid.UUID,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
     """Reads the program from narxoz.edu.kz now and puts the site's outcomes back (the hand edits are dropped).
     502 when the site cannot be read and 409 when it lists no outcomes: the edits are then kept."""
     program = await _editable_program(session, principal, program_id)
-    return ProgramDetailOut.of(await program_outcomes.restore_from_site(session, program))
+    return ProgramDetailOut.of(
+        await program_outcomes.restore_from_site(session, program, _audit(principal, x_client))
+    )

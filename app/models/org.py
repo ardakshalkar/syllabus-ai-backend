@@ -74,6 +74,8 @@ class Program(UUIDPk, Base):
     imported_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     # Set when someone corrected the outcomes by hand (the site has mistakes): a later import then leaves them alone.
     outcomes_edited_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # Set when someone changed the program's name, level or passport by hand: a later import keeps those too.
+    details_edited_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
     outcomes: Mapped[list["ProgramOutcome"]] = relationship(
         order_by="ProgramOutcome.number", cascade="all, delete-orphan", lazy="selectin"
@@ -102,14 +104,17 @@ class ProgramDiscipline(UUIDPk, Base):
     """A course the program lists on its page; later used to tell which programs a syllabus belongs to."""
 
     __tablename__ = "program_disciplines"
-    __table_args__ = (sa.UniqueConstraint("program_id", "number"),)
 
     program_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("programs.id", ondelete="CASCADE"), index=True
     )
-    number: Mapped[int]
+    number: Mapped[int]  # the order they are listed in; not unique, an import renumbers
     name: Mapped[dict] = mapped_column(sa.JSON)  # {"ru": ..., "kk": ..., "en": ...}
     is_profile: Mapped[bool] = mapped_column(default=False)
+    # "site" for a course read from narxoz.edu.kz, "manual" for one added by hand. An import refreshes site rows
+    # that nobody edited, keeps edited ones as they are and never touches manual ones.
+    source: Mapped[str] = mapped_column(sa.String(10), default="site", server_default="site")
+    edited: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
 
 
 class Course(UUIDPk, Base):
