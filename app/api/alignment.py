@@ -12,8 +12,14 @@ from app.deps import CurrentUser, DbSession
 from app.enums import Role
 from app.models import Course, Program, School
 from app.schemas.alignment import (
+    BulkIn,
+    BulkResult,
+    CoursePrograms,
     CourseProgramsIn,
     CourseProgramsOut,
+    CsvApplied,
+    CsvIn,
+    CsvPreview,
     OutcomeTextIn,
     ProgramCoverageOut,
     SchoolCoverageOut,
@@ -22,7 +28,7 @@ from app.schemas.alignment import (
 )
 from app.schemas.catalog import ProgramDetailOut
 from app.services import alignment_views as views
-from app.services import catalog_edit, program_links, program_outcomes
+from app.services import catalog_edit, course_assignment, program_links, program_outcomes
 from app.services.syllabi import get_syllabus
 
 router = APIRouter(tags=["alignment"])
@@ -61,6 +67,64 @@ async def set_course_programs(
     await program_links.set_manual(session, course.id, wanted)
     await session.commit()
     return await views.course_programs(session, course)
+
+
+async def _managed_school(session, principal, school_id: uuid.UUID) -> None:
+    if await session.get(School, school_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found")
+    if not manages_school(principal, school_id):
+        raise forbidden(
+            "Only the Provost Office, KOK, or the School administrator can set its courses' programs"
+        )
+
+
+@router.get("/schools/{school_id}/course-programs", response_model=CoursePrograms)
+async def school_course_programs(
+    school_id: uuid.UUID,
+    principal: CurrentUser,
+    session: DbSession,
+    state: str | None = None,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """The School's courses with the program each is compared with and how sure that is. `state` filters:
+    manual, declared, single, ambiguous or none."""
+    await _managed_school(session, principal, school_id)
+    return await course_assignment.listing(
+        session, school_id, state, q, min(max(limit, 1), 500), max(offset, 0)
+    )
+
+
+@router.post("/schools/{school_id}/course-programs", response_model=BulkResult)
+async def set_school_course_programs(
+    school_id: uuid.UUID, body: BulkIn, principal: CurrentUser, session: DbSession
+):
+    """Sets the programs of many courses at once (each item as PUT /courses/{id}/programs). All or nothing."""
+    await _managed_school(session, principal, school_id)
+    result = await course_assignment.apply_bulk(session, school_id, body.items)
+    await session.commit()
+    return result
+
+
+@router.post("/schools/{school_id}/course-programs/csv", response_model=CsvPreview)
+async def preview_course_programs_csv(
+    school_id: uuid.UUID, body: CsvIn, principal: CurrentUser, session: DbSession
+):
+    """Reads `course,program` rows and says which are ready and which are not, without changing anything."""
+    await _managed_school(session, principal, school_id)
+    return await course_assignment.preview_csv(session, school_id, body.csv)
+
+
+@router.put("/schools/{school_id}/course-programs/csv", response_model=CsvApplied)
+async def apply_course_programs_csv(
+    school_id: uuid.UUID, body: CsvIn, principal: CurrentUser, session: DbSession
+):
+    """Applies the ready rows of the same file; the rest are listed and left alone."""
+    await _managed_school(session, principal, school_id)
+    result = await course_assignment.apply_csv(session, school_id, body.csv)
+    await session.commit()
+    return result
 
 
 @router.get("/syllabi/{syllabus_id}/alignment", response_model=SyllabusAlignmentOut)
