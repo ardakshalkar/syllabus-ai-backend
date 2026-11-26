@@ -27,8 +27,9 @@ from app.schemas.alignment import (
     UniversityCoverageOut,
 )
 from app.schemas.catalog import ProgramDetailOut
+from app.schemas.coverage import InclusionIn, InclusionOut, ProgramSyllabusCoverage, SchoolSyllabusCoverage
 from app.services import alignment_views as views
-from app.services import catalog_edit, course_assignment, program_links, program_outcomes
+from app.services import catalog_edit, course_assignment, program_links, program_outcomes, syllabus_coverage
 from app.services.syllabi import get_syllabus
 
 router = APIRouter(tags=["alignment"])
@@ -125,6 +126,57 @@ async def apply_course_programs_csv(
     result = await course_assignment.apply_csv(session, school_id, body.csv)
     await session.commit()
     return result
+
+
+@router.get("/schools/{school_id}/syllabus-coverage", response_model=SchoolSyllabusCoverage)
+async def school_syllabus_coverage(
+    school_id: uuid.UUID, semester: str, principal: CurrentUser, session: DbSession
+):
+    """Per program of the School: how many of its listed courses have a syllabus, have none, or have several."""
+    await _managed_school(session, principal, school_id)
+    return await syllabus_coverage.school_summary(session, school_id, semester)
+
+
+@router.get("/programs/{program_id}/syllabus-coverage", response_model=ProgramSyllabusCoverage)
+async def program_syllabus_coverage(
+    program_id: uuid.UUID, semester: str, principal: CurrentUser, session: DbSession
+):
+    """The program's listed courses with the syllabi found for each (found / none / multiple), and the syllabi that
+    match none of them."""
+    program = await session.get(Program, program_id)
+    if program is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Program not found")
+    if not await views.can_see_school(session, principal, program.school_id):
+        raise forbidden(
+            "Only the Provost Office, KOK, the School administrator or the program head can see this"
+        )
+    return await syllabus_coverage.program_view(session, program, semester)
+
+
+@router.post("/schools/{school_id}/syllabus-coverage/refresh")
+async def refresh_syllabus_coverage(
+    school_id: uuid.UUID, semester: str, principal: CurrentUser, session: DbSession
+):
+    """Settles several files of one listed course again (it also runs after every Drive sync)."""
+    await _managed_school(session, principal, school_id)
+    changed = await syllabus_coverage.resolve(session, semester, school_id)
+    await session.commit()
+    return {"changed": changed}
+
+
+@router.put("/syllabi/{syllabus_id}/inclusion", response_model=InclusionOut)
+async def set_inclusion(
+    syllabus_id: uuid.UUID, body: InclusionIn, principal: CurrentUser, session: DbSession
+):
+    """The School's answer when a course has several files: count this one (optionally as the primary one) or leave it
+    out. A file waiting for an answer is neither checked nor counted."""
+    syllabus = await get_syllabus(session, syllabus_id)
+    course = await _course(session, syllabus.course_id)
+    if not manages_school(principal, await views.school_of_course(session, course)):
+        raise forbidden("Only the Provost Office, KOK, or the School administrator can decide this")
+    await syllabus_coverage.decide(session, syllabus, body.inclusion, body.make_primary, principal.id)
+    await session.commit()
+    return InclusionOut(syllabus_id=syllabus.id, inclusion=syllabus.inclusion, decided=True)
 
 
 @router.get("/syllabi/{syllabus_id}/alignment", response_model=SyllabusAlignmentOut)

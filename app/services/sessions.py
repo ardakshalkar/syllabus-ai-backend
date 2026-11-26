@@ -178,6 +178,7 @@ async def _resolve_versions(session: AsyncSession, cs: CheckSession) -> list[tup
         Syllabus.semester == cs.semester,
         SyllabusVersion.version == Syllabus.current_version,
         Syllabus.drive_missing_at.is_(None),  # its file left Google Drive
+        Syllabus.inclusion == "active",  # not one waiting for the School's answer, or left out
     )
     if cs.only_unchecked:
         # Checked, needing revision, or being checked right now: none of those is waiting for the AI.

@@ -451,6 +451,7 @@ async def count_new_files(limit_s: float = COUNT_RUN_S) -> int:
                         .where(
                             SyllabusVersion.version == Syllabus.current_version,
                             Syllabus.drive_missing_at.is_(None),
+                            Syllabus.inclusion == "active",
                         )
                     )
                 ).all()

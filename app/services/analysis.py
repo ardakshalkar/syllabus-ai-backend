@@ -67,7 +67,7 @@ def _severities(s: Syllabus) -> dict[str, int]:
 
 async def _rows(session: AsyncSession, principal: Principal, semester: str, school_id: uuid.UUID | None):
     query = syllabus_rows_query(principal).where(
-        Syllabus.semester == semester, Syllabus.drive_missing_at.is_(None)
+        Syllabus.semester == semester, Syllabus.drive_missing_at.is_(None), Syllabus.inclusion == "active"
     )
     if school_id:
         query = query.where(School.id == school_id)

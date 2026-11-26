@@ -29,6 +29,13 @@ class Syllabus(UUIDPk, CreatedAt, Base):
     folder_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("upload_folders.id"))
     # Set when the syllabus's file is no longer in its School's Drive folder; its results are kept.
     drive_missing_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # Whether it is checked and counted. When one course of a program has several files, the newest stays "active" and
+    # the others wait ("pending") until the School decides ("active" to count it too, "excluded" to leave it out).
+    inclusion: Mapped[str] = mapped_column(sa.String(10), default="active", server_default="active")
+    inclusion_decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    inclusion_decided_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()
     )
