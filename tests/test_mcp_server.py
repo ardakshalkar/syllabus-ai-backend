@@ -47,7 +47,7 @@ def test_nothing_dangerous_is_reachable_in_any_tier():
 def test_the_read_tier_changes_nothing(spec):
     for tool in catalog.build_tools(spec, "read"):
         assert tool.read_only, tool.name
-        assert tool.method == "GET" or tool.name in ("estimate_check_cost", "find_course_in_plans")
+        assert tool.method == "GET" or tool.name in catalog.CHECK_ONLY
 
 
 def test_nothing_that_costs_money_or_goes_out_is_a_tool(spec):
@@ -259,3 +259,49 @@ async def test_check_results_are_asked_for_in_the_compact_form(spec):
         await client.call(tools[name], args)
     assert [p["compact"] for p in seen] == ["true", "true"]
     await client.aclose()
+
+
+def test_the_catalog_can_be_edited_through_mcp_but_not_deleted(spec):
+    write = {t.name: t for t in catalog.build_tools(spec, "write")}
+    read = {t.name: t for t in catalog.build_tools(spec, "read")}
+    editing = {
+        "create_program",
+        "update_program",
+        "add_program_outcome",
+        "update_program_outcome",
+        "delete_program_outcome",
+        "add_program_course",
+        "update_program_course",
+        "delete_program_course",
+        "set_school_course_programs",
+        "apply_course_programs_csv",
+        "set_syllabus_inclusion",
+    }
+    assert editing <= set(write) and not editing & set(read)  # only with the write scope
+    assert {
+        "get_program_syllabus_coverage",
+        "get_school_syllabus_coverage",
+        "list_school_course_programs",
+    } <= set(read)
+    # Checking a CSV changes nothing, so it is a read tool; applying it is not.
+    assert (
+        read["preview_course_programs_csv"].read_only
+        and "changes data" not in read["preview_course_programs_csv"].description
+    )
+    assert not write["apply_course_programs_csv"].read_only
+    assert (
+        "delete_program" not in write
+    )  # an imported program would come back, a made one is gone: people do this
+
+
+def test_a_connected_app_may_edit_the_catalog_only_with_the_write_scope():
+    from app.auth import scopes
+
+    assert scopes.permits("mcp:write", "POST", "/programs") and scopes.permits(
+        "mcp:write", "PATCH", "/programs/{program_id}"
+    )
+    assert not scopes.permits("mcp:read", "POST", "/programs")
+    assert scopes.permits(
+        "mcp:read", "POST", "/schools/{school_id}/course-programs/csv"
+    )  # only checks the rows
+    assert not scopes.permits("mcp:write", "DELETE", "/programs/{program_id}")

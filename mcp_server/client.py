@@ -35,6 +35,7 @@ class ApiClient:
         self._transport, self._timeout = transport, timeout
         self._email, self._password = email, password
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        headers["X-Client"] = "mcp"  # the change log says a change came through the MCP server
         # The sign-in sets a session cookie; the client keeps it and sends it on every call.
         self._http = httpx.AsyncClient(
             base_url=self.base_url,
@@ -99,7 +100,7 @@ class ApiClient:
         """One call for one person: a client of its own, so no cookie or header of one person can reach another."""
         async with httpx.AsyncClient(
             base_url=self.base_url,
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token}", "X-Client": "mcp"},
             timeout=self._timeout,
             transport=self._transport,
             follow_redirects=False,

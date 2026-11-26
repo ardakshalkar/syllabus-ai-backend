@@ -7,7 +7,8 @@ The MCP server (mcp_server/catalog.py) builds its tools from these same lists, s
 cannot drift apart.
 
 - mcp:read:  look things up. Nothing is changed and nothing costs money.
-- mcp:write: also change plans, set a course's programs, comment, mark notifications read.
+- mcp:write: also change plans, programs, their outcomes and course lists, set courses' programs, decide which
+  syllabus of a course counts, comment, mark notifications read.
 
 There is deliberately no scope for anything that costs money or goes out of the university: starting the checker's
 AI runs, moving a syllabus through approval, e-mailing the report. People do those on the screens. A person who wants
@@ -65,6 +66,14 @@ READ: dict[tuple[str, str], str] = {
     ("GET", "/study-plans/{plan_id}/events"): "get_study_plan_history",
     ("GET", "/courses/{course_id}/plan-matches"): "match_course_to_plans",
     ("POST", "/study-plans/match"): "find_course_in_plans",  # a POST that only looks a code or title up
+    ("GET", "/programs/{program_id}/events"): "get_program_history",
+    ("GET", "/schools/{school_id}/course-programs"): "list_school_course_programs",
+    (
+        "POST",
+        "/schools/{school_id}/course-programs/csv",
+    ): "preview_course_programs_csv",  # only checks the rows
+    ("GET", "/programs/{program_id}/syllabus-coverage"): "get_program_syllabus_coverage",
+    ("GET", "/schools/{school_id}/syllabus-coverage"): "get_school_syllabus_coverage",
 }
 
 WRITE: dict[tuple[str, str], str] = {
@@ -76,6 +85,20 @@ WRITE: dict[tuple[str, str], str] = {
     ("DELETE", "/study-plans/{plan_id}"): "delete_draft_study_plan",
     ("POST", "/study-plans/import"): "import_study_plans",
     ("PUT", "/courses/{course_id}/programs"): "set_course_programs",
+    # The catalog: programs, their learning outcomes and the courses they list. What the user's role may do on the
+    # screens (the Provost Office, KOK, an administrator, a School's administrator for its own programs) is what the
+    # tool may do; every change is logged with the channel "mcp". Deleting a program is not a tool.
+    ("POST", "/programs"): "create_program",
+    ("PATCH", "/programs/{program_id}"): "update_program",
+    ("POST", "/programs/{program_id}/outcomes"): "add_program_outcome",
+    ("PATCH", "/programs/{program_id}/outcomes/{number}"): "update_program_outcome",
+    ("DELETE", "/programs/{program_id}/outcomes/{number}"): "delete_program_outcome",
+    ("POST", "/programs/{program_id}/disciplines"): "add_program_course",
+    ("PATCH", "/programs/{program_id}/disciplines/{number}"): "update_program_course",
+    ("DELETE", "/programs/{program_id}/disciplines/{number}"): "delete_program_course",
+    ("POST", "/schools/{school_id}/course-programs"): "set_school_course_programs",
+    ("PUT", "/schools/{school_id}/course-programs/csv"): "apply_course_programs_csv",
+    ("PUT", "/syllabi/{syllabus_id}/inclusion"): "set_syllabus_inclusion",
     (
         "POST",
         "/versions/{version_id}/external-check",
