@@ -5,13 +5,17 @@ the most trusted source available, in this order:
 
 - manual:   the School set them on the course;
 - declared: the syllabus names a program code (6B04103);
+- plan:     the course code or title in the syllabus's header table is a course of a program's study plan
+            (services/study_plans.py). Plans are loaded for some programs only, and a general course ("Foreign
+            language") is in nearly every plan, so a plan never overrides a folder or a name: it narrows them to
+            the programs both give, and is the source on its own only when they find nothing;
 - folder:   the School keeps it in a Drive folder named after the program: "ОП МО" (Международные отношения),
             "ОП ГиМУ", "ГОП Право" (a group of programs), as the School of Law and Public Administration does;
 - name:     the course is on the program's list of courses on narxoz.edu.kz (87% of Drive courses match one);
 - school:   nothing ties the course to a program, so every program of its School is a candidate.
 
-Criteria 3.2 and 3.4 are graded only against a known program: manual or declared, or a folder or a name that
-matches a single program. With several candidates the alignment is shown, but nothing is held against the syllabus.
+Criteria 3.2 and 3.4 are graded only against a known program: manual or declared, or a plan, a folder or a name
+that matches a single program. With several candidates the alignment is shown, but nothing is held against the syllabus.
 """
 
 import difflib
@@ -56,7 +60,11 @@ class Candidates:
         """Whether the course's program is known well enough to grade criteria 3.2 and 3.4 against it."""
         if self.basis in (ProgramBasis.manual, ProgramBasis.declared):
             return bool(self.programs)
-        return self.basis in (ProgramBasis.folder, ProgramBasis.name) and len(self.programs) == 1
+        return self.basis in ONE_PROGRAM_BASES and len(self.programs) == 1
+
+
+# Sources that grade 3.2 and 3.4 only when they find exactly one program.
+ONE_PROGRAM_BASES = (ProgramBasis.plan, ProgramBasis.folder, ProgramBasis.name)
 
 
 class NameIndex:
@@ -203,6 +211,12 @@ async def record_declared(session: AsyncSession, course_id: uuid.UUID, text: str
     return ids
 
 
+async def record_plan(session: AsyncSession, course_id: uuid.UUID, program_ids: set[uuid.UUID]) -> None:
+    """The programs whose study plans list the course (found by services/study_plans.plan_program_ids)."""
+    await _replace(session, course_id, LinkSource.plan, program_ids)
+    await session.flush()
+
+
 async def set_manual(session: AsyncSession, course_id: uuid.UUID, program_ids: Iterable[uuid.UUID]) -> None:
     """The School's own choice; an empty list clears it, so the course falls back to what is found."""
     await _replace(session, course_id, LinkSource.manual, set(program_ids))
@@ -237,13 +251,33 @@ async def candidates(session: AsyncSession, course: Course, *, text: str | None 
     instead of the ones recorded for the course."""
     found = await links(session, course.id)
     if text is not None:
+        from app.services import study_plans  # it imports this module
+
         codes = declared_codes(text)
         found[LinkSource.declared] = (
             list(await session.scalars(sa.select(Program).where(Program.code.in_(codes)))) if codes else []
         )
-    for source in (LinkSource.manual, LinkSource.declared, LinkSource.folder, LinkSource.name):
+        ids = await study_plans.plan_program_ids(session, text)
+        found[LinkSource.plan] = (
+            list(await session.scalars(sa.select(Program).where(Program.id.in_(ids)).order_by(Program.code)))
+            if ids
+            else []
+        )
+    for source in (LinkSource.manual, LinkSource.declared):
         if found.get(source):
             return Candidates(ProgramBasis(source.value), found[source])
+    # Plans are loaded for some programs only, so a plan never overrides a folder or a name: it narrows them to
+    # the programs both give (then the plan is the basis), and stands alone only when they find nothing.
+    in_plans = found.get(LinkSource.plan, [])
+    plan_ids = {p.id for p in in_plans}
+    for source in (LinkSource.folder, LinkSource.name):
+        if programs := found.get(source):
+            shared = [p for p in programs if p.id in plan_ids]
+            if shared and len(shared) < len(programs):
+                return Candidates(ProgramBasis.plan, shared)
+            return Candidates(ProgramBasis(source.value), programs)
+    if in_plans:
+        return Candidates(ProgramBasis.plan, in_plans)
     school_id = await session.scalar(sa.select(Program.school_id).where(Program.id == course.program_id))
     pool = await school_programs(session, school_id) if school_id else []
     return Candidates(ProgramBasis.school if pool else None, pool)

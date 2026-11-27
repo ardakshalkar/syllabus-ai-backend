@@ -46,7 +46,15 @@ from app.models import (
     Syllabus,
     SyllabusVersion,
 )
-from app.services import check_mode, drive_catalog, program_links, run_live, run_progress, translations
+from app.services import (
+    check_mode,
+    drive_catalog,
+    program_links,
+    run_live,
+    run_progress,
+    study_plans,
+    translations,
+)
 from app.services.notifications import notify
 from app.services.rubric import LoadedRubric, load_rubric
 from app.storage import files
@@ -282,6 +290,9 @@ async def program_context(
         assert course is not None
         if record:
             await program_links.record_declared(session, course.id, content.raw_text)
+            await program_links.record_plan(
+                session, course.id, await study_plans.plan_program_ids(session, content.raw_text)
+            )
             found = await program_links.candidates(session, course)
         else:
             found = await program_links.candidates(session, course, text=content.raw_text)
@@ -304,6 +315,11 @@ async def program_context(
                 why = (
                     "it is not known which educational program this course belongs to: its name is on the "
                     f"course lists of {len(found.programs)} programs ({_codes(found.programs)})"
+                )
+            elif found.basis == ProgramBasis.plan:
+                why = (
+                    "it is not known which educational program this course belongs to: it is in the study plans "
+                    f"of {len(found.programs)} programs ({_codes(found.programs)})"
                 )
             elif found.basis == ProgramBasis.folder:
                 why = (

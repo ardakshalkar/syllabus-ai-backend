@@ -3,7 +3,8 @@
 `python -m app.cli setup-schools`, `python -m app.cli add-test-users [--password]`,
 `python -m app.cli set-password EMAIL`, `python -m app.cli bootstrap` (Schools, rubric and test users at once),
 `python -m app.cli import-users users.csv`, `python -m app.cli import-programs [--dry-run] [--code 6B04103]`,
-`python -m app.cli import-study-plans var/study_plans.json [--dry-run]`."""
+`python -m app.cli import-study-plans var/study_plans.json [--dry-run]`.
+Re-find courses' programs in the active study plans: `python -m app.cli link-plans`."""
 
 import argparse
 import asyncio
@@ -314,6 +315,9 @@ async def _import_study_plans(path: str, dry_run: bool) -> None:
         report = await sp.import_export(session, data, dry_run=dry_run)
         if dry_run:
             await session.rollback()
+        else:
+            listed = await sp.relink_courses(session)
+            print(f"courses some study plan lists: {listed}")
     head = "dry run, nothing saved: would create" if dry_run else "created"
     print(
         f"{head} {report['created']}, {'would update' if dry_run else 'updated'} {report['updated']}, "
@@ -393,6 +397,11 @@ async def _main(args: argparse.Namespace) -> None:
             await _import_programs(args.code, args.dry_run)
         elif args.command == "import-study-plans":
             await _import_study_plans(args.file, args.dry_run)
+        elif args.command == "link-plans":
+            from app.services import study_plans as sp
+
+            async with pg.session_scope() as session:
+                print(f"courses some study plan lists: {await sp.relink_courses(session)}")
         elif args.command == "drive-check":
             if not await _drive_check(args.folder, args.write):
                 raise SystemExit(1)
@@ -531,6 +540,10 @@ def main() -> None:
     )
     plans.add_argument("file", help="the export file, e.g. var/study_plans.json")
     plans.add_argument("--dry-run", action="store_true", help="count what would change, save nothing")
+    sub.add_parser(
+        "link-plans",
+        help="re-find each course's programs in the active study plans from its syllabus already read",
+    )
     check = sub.add_parser(
         "drive-check", help="check the Google Drive credentials and folders (GOOGLE_DRIVE_SETUP.md)"
     )
