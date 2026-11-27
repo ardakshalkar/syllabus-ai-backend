@@ -193,7 +193,9 @@ def extract_discipline_from_filename(filename: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"^(силлабус[а-яёa-z]*|syllabus[a-z]*|силабус[а-яёa-z]*)\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"^(силлабус[а-яёa-z]*|syllabus[a-z]*|силабус[а-яёa-z]*)\s+", "", cleaned, flags=re.IGNORECASE
+    )
     # 3. Repeatedly strip trailing semester, language, and version tags
     while True:
         stripped = _TRAILING_TAGS.sub("", cleaned)
@@ -377,7 +379,9 @@ def list_folder_tree(client: DriveClient, root_id: str) -> Listing:
         name = nfc(entry.name.strip())
         if entry.is_folder:
             if REFERENCE_FOLDER.search(name):
-                skipped.append({"path": f"{name}/", "reason": "study plans, archive or guidelines, not syllabi"})
+                skipped.append(
+                    {"path": f"{name}/", "reason": "study plans, archive or guidelines, not syllabi"}
+                )
             else:
                 folder_info[entry.id] = (name, None, name, [entry])
                 current_level_folders.append(entry)
@@ -401,7 +405,12 @@ def list_folder_tree(client: DriveClient, root_id: str) -> Listing:
 
             if child.is_folder:
                 if REFERENCE_FOLDER.search(child_name):
-                    skipped.append({"path": f"{child_path}/", "reason": "study plans, archive or guidelines, not syllabi"})
+                    skipped.append(
+                        {
+                            "path": f"{child_path}/",
+                            "reason": "study plans, archive or guidelines, not syllabi",
+                        }
+                    )
                 else:
                     child_chain = parent_chain + [child]
                     folder_info[child.id] = (child_name, parent_id, child_path, child_chain)
@@ -428,7 +437,9 @@ def list_folder_tree(client: DriveClient, root_id: str) -> Listing:
             continue
 
         if NON_SYLLABUS_FILE.search(file_name):
-            skipped.append({"path": file_path, "reason": "not a syllabus (readme, template or administrative file)"})
+            skipped.append(
+                {"path": file_path, "reason": "not a syllabus (readme, template or administrative file)"}
+            )
             continue
 
         discipline, course_id, program_folder = resolve_file_location(entry, chain)
@@ -743,6 +754,13 @@ async def sync_folder(folder_id: uuid.UUID, *, reuse_listing_s: float = 0) -> Sy
         folder = await session.get(UploadFolder, folder_id)
         if folder is not None:
             folder.read_at, folder.read_error = datetime.now(UTC), report.error
+            if not report.error:
+                try:  # several files of one listed course: the newest counts, the others wait for the School
+                    from app.services import syllabus_coverage
+
+                    await syllabus_coverage.resolve(session, folder.semester, folder.school_id)
+                except Exception:
+                    log.warning("could not settle duplicate syllabi of folder %s", folder_id, exc_info=True)
     try:
         await cache.put_json(_status_key(folder_id), asdict(report), _STATUS_TTL_S)
     except Exception:

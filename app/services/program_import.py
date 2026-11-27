@@ -185,8 +185,25 @@ def _set_outcome(row: ProgramOutcome, texts: dict[str, str]) -> None:
     row.text = texts
 
 
-def _set_discipline(row: ProgramDiscipline, value: tuple[dict[str, str], bool]) -> None:
-    row.name, row.is_profile = value
+def _sync_disciplines(program: Program, wanted: list[tuple[dict[str, str], bool]]) -> None:
+    """Refresh the courses read from the site, in the site's order, matching them by position. A course someone
+    edited keeps its text (and is not dropped if the site no longer lists it); one added by hand is not touched.
+    Edited and manual courses go after the site's own, so the numbers stay 1..n."""
+    site = sorted((d for d in program.disciplines if d.source == "site"), key=lambda d: d.number)
+    for position, row in enumerate(site):
+        if position >= len(wanted):
+            if not row.edited:
+                program.disciplines.remove(row)
+        elif not row.edited:
+            row.name, row.is_profile = wanted[position]
+    for names, is_profile in wanted[len(site) :]:
+        program.disciplines.append(ProgramDiscipline(number=0, name=names, is_profile=is_profile))
+    kept = [d for d in program.disciplines if d.source == "site"]
+    manual = sorted((d for d in program.disciplines if d.source != "site"), key=lambda d: d.number)
+    # New rows have number 0 and sort first among themselves only by insertion: keep that order by index.
+    ordered = sorted(kept, key=lambda d: (d.number == 0, d.number)) + manual
+    for number, row in enumerate(ordered, start=1):
+        row.number = number
 
 
 async def import_programs(
@@ -231,9 +248,10 @@ async def import_programs(
             report.created.append(p.code)
         else:
             report.updated.append(p.code)
-        program.name = (p.titles.get("ru") or p.titles.get("en") or p.code)[:200]
+        if program.details_edited_at is None:  # a corrected name and level stay corrected
+            program.name = (p.titles.get("ru") or p.titles.get("en") or p.code)[:200]
+            program.degree_level = p.degree_level[:40]
         program.school_id = school.id
-        program.degree_level = p.degree_level[:40]
         program.site_slug = p.site_slug
         program.titles = p.titles
         program.goal = p.goal or None
@@ -243,12 +261,7 @@ async def import_programs(
             report.outcomes += len(p.outcomes)
         else:
             report.outcomes_kept.append(p.code)
-        _sync_rows(
-            program.disciplines,
-            p.disciplines,
-            lambda n, v: ProgramDiscipline(number=n, name=v[0], is_profile=v[1]),
-            _set_discipline,
-        )
+        _sync_disciplines(program, p.disciplines)
         report.disciplines += len(p.disciplines)
     await session.flush()
     return report

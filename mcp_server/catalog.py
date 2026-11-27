@@ -3,13 +3,15 @@
 Every tool is one endpoint, named by hand below. Tiers are cumulative:
 
 - read:  look things up. Nothing is changed and nothing costs money.
-- write: change plans, set a course's programs, comment, mark notifications read.
+- write: change plans, programs, their outcomes and course lists, set courses' programs, decide which syllabus of a
+  course counts, comment, mark notifications read.
 
 Nothing that costs money or leaves the university is a tool (no AI checks, no approval moves, no e-mailed reports).
 
 Never exposed, in any tier: /admin (users, roles, passwords, catalog deletes), /auth, /drive (credentials, sync, setup),
 /health, file and PDF/CSV downloads, uploads, the syllabus-improvement wizard and its proposals, private pre-checks,
-creating or deleting Schools, programs, courses, folders and semesters. A test keeps this list true.
+creating or deleting Schools, folders and semesters, deleting a program or a course, creating a Drive course. A
+test keeps this list true.
 """
 
 from __future__ import annotations
@@ -29,6 +31,10 @@ FIXED_QUERY: dict[str, dict[str, Any]] = {
     "get_check_run": {"compact": True},
     "get_latest_check": {"compact": True},
 }
+
+
+# POST endpoints that only look something up or price it: they change nothing.
+CHECK_ONLY = ("estimate_check_cost", "find_course_in_plans", "preview_course_programs_csv")
 
 
 def allowed(tier: str) -> dict[tuple[str, str], str]:
@@ -167,10 +173,7 @@ def build_tools(
         summary = _clean(operation.get("summary"))
         detail = _clean(operation.get("description"))
         description = detail if detail else summary
-        if method in ("POST", "PUT", "PATCH", "DELETE") and name not in (
-            "estimate_check_cost",
-            "find_course_in_plans",
-        ):
+        if method in ("POST", "PUT", "PATCH", "DELETE") and name not in CHECK_ONLY:
             description += f" [{method} {path}: changes data]"
         tools.append(
             ToolDef(
@@ -182,7 +185,7 @@ def build_tools(
                 path_params=path_params,
                 query_params=query_params,
                 has_body=body is not None,
-                read_only=method == "GET" or name in ("estimate_check_cost", "find_course_in_plans"),
+                read_only=method == "GET" or name in CHECK_ONLY,
                 destructive=method == "DELETE" or name == "import_study_plans",
                 idempotent=method in ("GET", "PUT", "DELETE"),
                 fixed_query=dict(fixed),

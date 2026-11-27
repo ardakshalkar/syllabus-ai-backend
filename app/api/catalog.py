@@ -2,9 +2,10 @@ import asyncio
 import re
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Header, HTTPException, Response, status
 
 from app.auth.rbac import forbidden, manages_school
 from app.config import get_settings
@@ -21,6 +22,7 @@ from app.enums import (
 from app.library.config import get_library_config
 from app.models import (
     AssessmentRun,
+    CatalogEvent,
     CheckSession,
     Course,
     Program,
@@ -34,10 +36,13 @@ from app.models import (
 )
 from app.models.org import RoleAssignment, course_instructors
 from app.schemas.catalog import (
+    CatalogEventOut,
     CollectionFolderOut,
     CollectionSchoolOut,
     CourseIn,
     CourseOut,
+    DisciplineIn,
+    DisciplinePatch,
     ExclusionIn,
     ExclusionOut,
     FolderContentsOut,
@@ -50,12 +55,13 @@ from app.schemas.catalog import (
     ProgramDetailOut,
     ProgramIn,
     ProgramOut,
+    ProgramPatch,
     ResponsibleOut,
     RubricOut,
     SchoolIn,
     SchoolOut,
 )
-from app.services import drive_admin, drive_catalog
+from app.services import catalog_edit, drive_admin, drive_catalog
 from app.services.sessions import ensure_can_manage, settle_open_sessions
 from app.storage import drive, drive_config
 from app.storage.drive import GONE_HINT, explain_folder_error, folder_exists, share_hint
@@ -142,23 +148,175 @@ async def create_school(body: SchoolIn, principal: CurrentUser, session: DbSessi
 
 
 @router.post("/programs", response_model=ProgramOut, status_code=status.HTTP_201_CREATED)
-async def create_program(body: ProgramIn, principal: CurrentUser, session: DbSession):
+async def create_program(
+    body: ProgramIn,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
     # The Provost Office, KOK, or the administrator of the School the program belongs to.
     ensure_can_manage(principal, body.school_id)
     if await session.get(School, body.school_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "School not found")
     program = Program(
+        id=uuid.uuid4(),  # now, not at the insert: the change log below names it
         slug=body.slug,
         name=body.name.strip(),
         school_id=body.school_id,
         degree_level=body.degree_level.strip(),
         passport_text=body.passport_text,
+        code=catalog_edit.clean_code(body.code),
+        details_edited_at=datetime.now(UTC),
         outcomes=[],  # set, so ProgramOut.of does not lazy-load them (no implicit IO under asyncio)
         disciplines=[],
     )
     session.add(program)
-    await _commit(session, "A program with this slug already exists")
+    catalog_edit.record(
+        session,
+        user_id=principal.id,
+        channel=catalog_edit.channel_of(x_client),
+        program=program,
+        entity="program",
+        action="create",
+        summary=f"Created program {program.code or program.slug} {program.name}",
+    )
+    await _commit(session, "A program with this slug or code already exists")
     return ProgramOut.of(program)
+
+
+MAY = "Only the Provost Office, KOK, an administrator or the program's School administrator can do this"
+
+
+async def _managed_program(session: DbSession, principal, program_id: uuid.UUID) -> Program:
+    program = await session.get(Program, program_id)
+    if program is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Program not found")
+    if not manages_school(principal, program.school_id):
+        raise forbidden(MAY)
+    return program
+
+
+@router.patch("/programs/{program_id}", response_model=ProgramDetailOut)
+async def update_program(
+    program_id: uuid.UUID,
+    body: ProgramPatch,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
+    """Changes the name, level, passport or code. An import then leaves these fields as they are."""
+    program = await _managed_program(session, principal, program_id)
+    await catalog_edit.update_program(
+        session,
+        program,
+        body.model_dump(exclude_unset=True),
+        user_id=principal.id,
+        channel=catalog_edit.channel_of(x_client),
+    )
+    await _commit(session, "A program with this code already exists")
+    await session.refresh(program)
+    return ProgramDetailOut.of(program)
+
+
+@router.delete("/programs/{program_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_program(
+    program_id: uuid.UUID,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+) -> Response:
+    """Deletes a program no course is filed under. An imported program comes back with the next import."""
+    program = await _managed_program(session, principal, program_id)
+    await catalog_edit.delete_program(
+        session, program, user_id=principal.id, channel=catalog_edit.channel_of(x_client)
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/programs/{program_id}/disciplines", response_model=ProgramDetailOut, status_code=status.HTTP_201_CREATED
+)
+async def add_discipline(
+    program_id: uuid.UUID,
+    body: DisciplineIn,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
+    """Adds a course to the program's list. It is kept through later imports."""
+    program = await _managed_program(session, principal, program_id)
+    await catalog_edit.add_discipline(
+        session,
+        program,
+        body.name,
+        body.is_profile,
+        user_id=principal.id,
+        channel=catalog_edit.channel_of(x_client),
+    )
+    await session.commit()
+    await session.refresh(program)
+    return ProgramDetailOut.of(program)
+
+
+@router.patch("/programs/{program_id}/disciplines/{number}", response_model=ProgramDetailOut)
+async def edit_discipline(
+    program_id: uuid.UUID,
+    number: int,
+    body: DisciplinePatch,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
+    """Changes a course name or whether it is a profile subject. An imported course keeps the change."""
+    program = await _managed_program(session, principal, program_id)
+    await catalog_edit.edit_discipline(
+        session,
+        program,
+        number,
+        body.name,
+        body.is_profile,
+        user_id=principal.id,
+        channel=catalog_edit.channel_of(x_client),
+    )
+    await session.commit()
+    await session.refresh(program)
+    return ProgramDetailOut.of(program)
+
+
+@router.delete("/programs/{program_id}/disciplines/{number}", response_model=ProgramDetailOut)
+async def delete_discipline(
+    program_id: uuid.UUID,
+    number: int,
+    principal: CurrentUser,
+    session: DbSession,
+    x_client: Annotated[str | None, Header()] = None,
+):
+    """Removes a course added by hand. One from narxoz.edu.kz is edited instead (409)."""
+    program = await _managed_program(session, principal, program_id)
+    await catalog_edit.remove_discipline(
+        session, program, number, user_id=principal.id, channel=catalog_edit.channel_of(x_client)
+    )
+    await session.commit()
+    await session.refresh(program)
+    return ProgramDetailOut.of(program)
+
+
+@router.get("/programs/{program_id}/events", response_model=list[CatalogEventOut])
+async def program_events(program_id: uuid.UUID, principal: CurrentUser, session: DbSession, limit: int = 100):
+    """Who changed the program, its outcomes or its courses, newest first. Stays after the program is deleted."""
+    program = await session.get(Program, program_id)
+    if program is not None and not manages_school(principal, program.school_id):
+        raise forbidden(MAY)
+    if program is None and not principal.university_wide:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Program not found")
+    rows = await session.scalars(
+        sa.select(CatalogEvent)
+        .where(CatalogEvent.program_id == program_id)
+        .order_by(CatalogEvent.created_at.desc())
+        .limit(min(max(limit, 1), 500))
+    )
+    return list(rows)
 
 
 @router.post("/courses", response_model=CourseOut, status_code=status.HTTP_201_CREATED)

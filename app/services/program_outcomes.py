@@ -16,6 +16,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Program, ProgramOutcome
+from app.services import catalog_edit
 from app.services import program_import as pi
 
 LANGS = ("ru", "kk", "en")
@@ -56,40 +57,82 @@ def _outcome(program: Program, number: int) -> ProgramOutcome:
     raise HTTPException(status.HTTP_404_NOT_FOUND, "Outcome not found")
 
 
-async def _save(session: AsyncSession, program: Program) -> Program:
+async def _save(
+    session: AsyncSession,
+    program: Program,
+    action: str,
+    summary: str,
+    audit: tuple[uuid.UUID, str] | None,
+    changes: dict | None = None,
+) -> Program:
+    """`audit` is (user id, channel): the change and its log line are committed together."""
     program.outcomes_edited_at = datetime.now(UTC)
+    if audit:
+        catalog_edit.record(
+            session,
+            user_id=audit[0],
+            channel=audit[1],
+            program=program,
+            entity="outcome",
+            action=action,
+            summary=summary,
+            changes=changes,
+        )
     await session.commit()
     await session.refresh(program)
     return program
 
 
-async def add(session: AsyncSession, program: Program, text: dict[str, str]) -> Program:
+async def add(
+    session: AsyncSession, program: Program, text: dict[str, str], audit: tuple[uuid.UUID, str] | None = None
+) -> Program:
     if len(program.outcomes) >= MAX_OUTCOMES:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, f"A program can have at most {MAX_OUTCOMES} outcomes"
         )
     number = max((o.number for o in program.outcomes), default=0) + 1
-    program.outcomes.append(ProgramOutcome(number=number, text=clean_text(text)))
-    return await _save(session, program)
+    cleaned = clean_text(text)
+    program.outcomes.append(ProgramOutcome(number=number, text=cleaned))
+    return await _save(session, program, "create", f"Added outcome {number}", audit, {"after": cleaned})
 
 
-async def edit(session: AsyncSession, program: Program, number: int, text: dict[str, str]) -> Program:
-    _outcome(program, number).text = clean_text(text)
-    return await _save(session, program)
+async def edit(
+    session: AsyncSession,
+    program: Program,
+    number: int,
+    text: dict[str, str],
+    audit: tuple[uuid.UUID, str] | None = None,
+) -> Program:
+    outcome = _outcome(program, number)
+    before, outcome.text = outcome.text, clean_text(text)
+    return await _save(
+        session,
+        program,
+        "edit",
+        f"Changed outcome {number}",
+        audit,
+        {"before": before, "after": outcome.text},
+    )
 
 
-async def remove(session: AsyncSession, program: Program, number: int) -> Program:
-    program.outcomes.remove(_outcome(program, number))
+async def remove(
+    session: AsyncSession, program: Program, number: int, audit: tuple[uuid.UUID, str] | None = None
+) -> Program:
+    gone = _outcome(program, number)
+    removed = gone.text
+    program.outcomes.remove(gone)
     await session.flush()
     # Close the gap in ascending order, one flush each: (program_id, number) is unique.
     for outcome in sorted(program.outcomes, key=lambda o: o.number):
         if outcome.number > number:
             outcome.number -= 1
             await session.flush()
-    return await _save(session, program)
+    return await _save(session, program, "delete", f"Removed outcome {number}", audit, {"before": removed})
 
 
-async def restore_from_site(session: AsyncSession, program: Program) -> Program:
+async def restore_from_site(
+    session: AsyncSession, program: Program, audit: tuple[uuid.UUID, str] | None = None
+) -> Program:
     """Reads the program from narxoz.edu.kz now and puts the site's outcomes back, dropping the hand edits and the
     links earlier checks made to outcomes that no longer exist. If the site cannot be read, or lists no outcomes for
     the program, nothing changes: the edits and their protection from `import-programs` stay."""
@@ -114,6 +157,16 @@ async def restore_from_site(session: AsyncSession, program: Program) -> Program:
     pi.replace_outcomes(program, site.outcomes)
     program.outcomes_edited_at = None
     program.imported_at = datetime.now(UTC)
+    if audit:
+        catalog_edit.record(
+            session,
+            user_id=audit[0],
+            channel=audit[1],
+            program=program,
+            entity="outcome",
+            action="restore",
+            summary="Put the outcomes from narxoz.edu.kz back",
+        )
     await session.commit()
     await session.refresh(program)
     return program

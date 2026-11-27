@@ -132,3 +132,61 @@ class OutcomeTextIn(Schema):
 
 
 CourseOutcomeLinks.model_rebuild()
+
+
+class CourseProgramRow(Schema):
+    course_id: uuid.UUID
+    name: str
+    discipline: str | None
+    # manual / declared: settled. single: one program by folder or name. ambiguous: several. none: none found.
+    state: str
+    basis: ProgramBasis | None
+    programs: list[ProgramRef]
+
+
+class CoursePrograms(Schema):
+    total: int  # after the filters
+    counts: dict[str, int]  # every course of the School by state, whatever the filters
+    items: list[CourseProgramRow]
+    limit: int
+    offset: int
+
+
+class BulkItem(Schema):
+    course_id: uuid.UUID
+    # Empty: clear the School's choice for the course, so it goes back to what is found automatically.
+    program_ids: list[uuid.UUID] = Field(default=[], max_length=60)
+
+
+class BulkIn(Schema):
+    items: list[BulkItem] = Field(max_length=2000)
+
+
+class BulkResult(Schema):
+    set: int
+    cleared: int
+
+
+class CsvIn(Schema):
+    csv: str = Field(description="rows of `course,program`; the first row names the columns")
+
+
+class CsvRow(Schema):
+    line: int
+    course: str
+    program: str
+    ready: bool
+    problems: list[str]
+    course_ids: list[uuid.UUID]  # every course the name matched (a discipline can have several files)
+    program_ids: list[uuid.UUID]
+
+
+class CsvPreview(Schema):
+    rows: list[CsvRow]
+    ready: int
+    problems: int
+
+
+class CsvApplied(BulkResult):
+    skipped: int
+    rows: list[CsvRow]

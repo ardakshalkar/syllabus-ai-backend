@@ -30,6 +30,39 @@ class ProgramIn(Schema):
     degree_level: Annotated[str, Field(min_length=1, max_length=40)]
     # Criterion 3.4 stays "Cannot verify" for a program until its passport text is here.
     passport_text: str | None = None
+    # The program's code (6B04103). A program without one is a School's placeholder, where Drive courses are filed,
+    # and has no learning outcomes; give the code to make it a real program.
+    code: str | None = None
+
+
+class ProgramPatch(Schema):
+    """Only the fields that are sent change. An imported program keeps the change through later imports."""
+
+    name: Name | None = None
+    degree_level: Annotated[str, Field(min_length=1, max_length=40)] | None = None
+    passport_text: str | None = None
+    code: str | None = None
+
+
+class DisciplineIn(Schema):
+    name: dict[str, str] = Field(max_length=3, description="the course name in ru / kk / en, at least one")
+    is_profile: bool = False
+
+
+class DisciplinePatch(Schema):
+    name: dict[str, str] | None = Field(default=None, max_length=3)
+    is_profile: bool | None = None
+
+
+class CatalogEventOut(Schema):
+    id: uuid.UUID
+    created_at: datetime
+    user_id: uuid.UUID | None
+    channel: str
+    entity: str
+    action: str
+    summary: str
+    changes: dict | None
 
 
 class ProgramOut(Schema):
@@ -77,6 +110,8 @@ class ProgramDisciplineOut(Schema):
     number: int
     name: dict[str, str]
     is_profile: bool
+    source: str = "site"  # "site" (narxoz.edu.kz) or "manual" (added here)
+    edited: bool = False  # changed here, so an import keeps it
 
 
 class ProgramDetailOut(ProgramOut):

@@ -170,6 +170,7 @@ async def checked_syllabi(
         .where(
             Syllabus.semester == semester,
             Syllabus.drive_missing_at.is_(None),
+            Syllabus.inclusion == "active",  # not one waiting for the School or left out
             AssessmentRun.status == RunStatus.completed,
         )
     )

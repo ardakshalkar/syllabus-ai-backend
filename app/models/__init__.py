@@ -1,4 +1,5 @@
 from app.models.alignment import CourseProgram, LinkOrigin, LinkSource, OutcomeLink, ProgramBasis
+from app.models.audit import CatalogEvent
 from app.models.base import Base
 from app.models.oauth import OAuthClient, OAuthGrant
 from app.models.org import (
@@ -37,6 +38,7 @@ __all__ = [
     "ApprovalEvent",
     "AssessmentRun",
     "Base",
+    "CatalogEvent",
     "CheckSession",
     "Course",
     "CourseProgram",
