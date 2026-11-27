@@ -1,8 +1,9 @@
 """Learning plans (учебные планы): import from the advisor's export, edit, and find the plan course a syllabus is.
 
 A syllabus is matched to a plan course by, in this order: its course code (the plan's own, or a Platonus code),
-its title in any language exactly, its title spelled closely. Credits then confirm or doubt the match. A match is
-a suggestion: the School confirms a course's program (services/program_links.set_manual).
+its title in any language exactly, its title spelled closely. Credits then confirm or doubt the match. The programs
+whose plans list a course are one source of the course's program (LinkSource.plan in services/program_links.py):
+one program is graded against, as a folder or a name is; the School can always set the program by hand.
 """
 
 from __future__ import annotations
@@ -18,7 +19,16 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import PlanSource, PlanStatus, Program, StudyPlan, StudyPlanCourse, StudyPlanEvent
+from app.models import (
+    PlanSource,
+    PlanStatus,
+    Program,
+    StudyPlan,
+    StudyPlanCourse,
+    StudyPlanEvent,
+    Syllabus,
+    SyllabusVersion,
+)
 from app.services.program_import import normalize_code
 from app.services.program_links import normalize_name
 
@@ -137,6 +147,71 @@ class PlanIndex:
             )
             for plan, course in hits
         ]
+
+
+def trusted(m: PlanMatch) -> bool:
+    """A close spelling of the title is a guess, and credits that disagree with the plan make it a wrong one."""
+    return not (m.how == "close title" and m.credits_agree is False)
+
+
+async def plan_program_ids(
+    session: AsyncSession, text: str | None, index: PlanIndex | None = None
+) -> set[uuid.UUID]:
+    """The imported programs whose active study plans list the course this syllabus is, by the code and title in
+    its header table. Empty when the syllabus has no header table or no plan lists the course."""
+    header = syllabus_header(text)
+    if header is None or not (header.code or header.title):
+        return set()
+    index = index or await PlanIndex.load(session)
+    matches = [
+        m for m in index.match(code=header.code, title=header.title, credits=header.credits) if trusted(m)
+    ]
+    best = programs_of(matches)
+    ids = {m.plan.program_id for m in best.values() if m.plan.program_id}
+    unresolved = {normalize_code(code) for code, m in best.items() if not m.plan.program_id}
+    if unresolved:
+        ids |= set(await session.scalars(sa.select(Program.id).where(Program.code.in_(unresolved))))
+    return ids
+
+
+async def relink_courses(session: AsyncSession, course_ids: list[uuid.UUID] | None = None) -> int:
+    """Re-find the plan programs of courses (all, or these) from the text of their syllabi already read, so that a
+    change to the plans counts at once: the next check compares with them instead of reusing an older result.
+    A course with several syllabi is read from the newest. Returns how many courses some plan lists."""
+    from beanie.operators import In
+
+    from app.documents import ExtractedDocument
+    from app.services import program_links
+
+    query = (
+        sa.select(Syllabus.course_id, SyllabusVersion.id)
+        .join(
+            SyllabusVersion,
+            sa.and_(
+                SyllabusVersion.syllabus_id == Syllabus.id,
+                SyllabusVersion.version == Syllabus.current_version,
+            ),
+        )
+        .order_by(SyllabusVersion.created_at.desc())
+    )
+    if course_ids is not None:
+        query = query.where(Syllabus.course_id.in_(course_ids))
+    versions: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
+    for course_id, version_id in (await session.execute(query)).tuples():
+        versions[course_id].append(version_id)
+    every = [v for vs in versions.values() for v in vs]
+    docs = await ExtractedDocument.find(In(ExtractedDocument.version_id, every)).to_list() if every else []
+    text = {d.version_id: d.content.raw_text for d in docs}
+    index = await PlanIndex.load(session)
+    listed = 0
+    for course_id, ids in versions.items():
+        raw = next((text[v] for v in ids if v in text), None)
+        if raw is None:
+            continue
+        found = await plan_program_ids(session, raw, index)
+        listed += bool(found)
+        await program_links.record_plan(session, course_id, found)
+    return listed
 
 
 def programs_of(matches: list[PlanMatch]) -> dict[str, PlanMatch]:

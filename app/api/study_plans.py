@@ -243,8 +243,17 @@ async def import_plans(body: dict, principal: CurrentUser, session: DbSession, d
             status.HTTP_422_UNPROCESSABLE_CONTENT, 'Expected {"plans": [...]} as in the export file'
         )
     report = await sp.import_export(session, body, user_id=principal.id, dry_run=dry_run)
+    if not dry_run and (report["created"] or report["updated"]):
+        await sp.relink_courses(session)
     await session.commit()
     return report
+
+
+async def _relink_if_active(session, plan: StudyPlan) -> None:
+    """Courses' plan programs follow the active plans (services/study_plans.relink_courses)."""
+    if plan.status == PlanStatus.active:
+        await session.flush()
+        await sp.relink_courses(session)
 
 
 @router.post("/study-plans", response_model=PlanOut, status_code=status.HTTP_201_CREATED)
@@ -277,6 +286,7 @@ async def create_plan(body: PlanIn, principal: CurrentUser, session: DbSession):
     )
     await sp.set_courses(session, plan, [c.model_dump() for c in body.courses])
     await sp.log(session, plan, principal.id, "create", f"{len(plan.courses)} courses, {plan.status.value}")
+    await _relink_if_active(session, plan)
     await session.commit()
     await session.refresh(plan)
     return await _out(session, plan, principal)
@@ -309,6 +319,7 @@ async def replace_courses(
     await sp.set_courses(session, plan, [c.model_dump() for c in body])
     _touch(plan)
     await sp.log(session, plan, principal.id, "courses", f"{before} -> {len(body)} courses")
+    await _relink_if_active(session, plan)
     await session.commit()
     await session.refresh(plan)
     return await _out(session, plan, principal)
@@ -330,9 +341,13 @@ async def _set_status(
 ) -> PlanOut:
     plan = await _plan(session, plan_id)
     await _ensure_can_edit(session, principal, plan)
+    before = plan.status
     plan.status = new
     _touch(plan)
     await sp.log(session, plan, principal.id, action, "")
+    if PlanStatus.active in (before, new):
+        await session.flush()
+        await sp.relink_courses(session)
     await session.commit()
     await session.refresh(plan)
     return await _out(session, plan, principal)
